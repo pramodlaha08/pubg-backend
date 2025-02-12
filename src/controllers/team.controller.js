@@ -1,17 +1,25 @@
 import { Team } from "../models/team.model.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
+import { ApiResponse } from "../utils/ApiResponse.js";
+import { uploadOnCloudinary } from "../utils/cloudinary.js";
 
 // Create Team
 const createTeam = asyncHandler(async (req, res) => {
   const { name, slot } = req.body;
+  const logoLocalPath = req.file?.path;
+  if (!logoLocalPath) throw new ApiError(400, "Avatar is required");
+  const logo = await uploadOnCloudinary(logoLocalPath);
+  if (!logo.url)
+    throw new ApiError(500, "Something went wrong while uploading logo");
 
   const team = await Team.create({
     name,
     slot,
-    logo: req.file?.path || "",
+    logo: logo.url,
   });
+  if(!team) throw new ApiError(400, "Couldn't create team");
 
-  res.status(201).json(team);
+  res.status(201).json(new ApiResponse(201, team, "Team created successfully"));
 });
 
 // Update Kills
@@ -112,4 +120,15 @@ const getPositionForSlot = (slot, slotPositions) => {
   return found ? found.position : 0;
 };
 
-export { createTeam, updateKills, updatePosition, handleElimination, addRound };
+const helloworld = asyncHandler(async (req,res) => {
+  res.status(200).json(200, null, "ok")
+
+})
+export {
+  createTeam,
+  updateKills,
+  updatePosition,
+  handleElimination,
+  addRound,
+  helloworld,
+};

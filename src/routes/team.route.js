@@ -1,15 +1,17 @@
-import express from "express";
+import {Router} from "express";
 import {
   addRound,
   createTeam,
   handleElimination,
   updateKills,
   updatePosition,
+  helloworld,
 } from "../controllers/team.controller.js";
-import upload from "../middlewares/upload.middleware.js";
+import { upload } from "../middlewares/multer.middleware.js";
 
-const router = express.Router();
+const router = Router();
 
+router.get("/", helloworld);
 router.post("/", upload.single("logo"), createTeam);
 router.put("/:id/kills", updateKills);
 router.put("/:id/position", updatePosition);

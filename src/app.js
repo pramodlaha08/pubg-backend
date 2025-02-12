@@ -26,7 +26,7 @@ app.use(
 app.use(express.static("public"));
 
 import teamRoutes from "./routes/team.route.js";
-app.use("/teams", teamRoutes);
+app.use("/api/v1/team", teamRoutes);
 
 
 
