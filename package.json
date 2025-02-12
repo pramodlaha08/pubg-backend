@@ -1,0 +1,17 @@
+{
+  "name": "pubg-backend",
+  "version": "1.0.0",
+  "description": "this is backend for handling pubg tournament",
+  "main": "index.js",
+  "scripts": {
+    "test": "run"
+  },
+  "keywords": [
+    "backend",
+    "hdc",
+    "tournament",
+    "pubg"
+  ],
+  "author": "pramod laha",
+  "license": "ISC"
+}
