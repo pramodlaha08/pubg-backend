@@ -1,21 +1,21 @@
 import {Router} from "express";
 import {
-  addRound,
+  createRound,
   createTeam,
   handleElimination,
   updateKills,
-  updatePosition,
-  helloworld,
+  getAllTeams,
+  deleteTeam,
 } from "../controllers/team.controller.js";
 import { upload } from "../middlewares/multer.middleware.js";
 
 const router = Router();
 
-router.get("/", helloworld);
+router.get("/", getAllTeams);
 router.post("/", upload.single("logo"), createTeam);
-router.put("/:id/kills", updateKills);
-router.put("/:id/position", updatePosition);
-router.put("/:id/elimination", handleElimination);
-router.post("/rounds", addRound);
+router.put("/:teamId/kills", updateKills);
+router.put("/:teamId/elimination", handleElimination);
+router.post("/rounds", createRound);
+router.delete("/:teamId", deleteTeam);
 
 export default router;
