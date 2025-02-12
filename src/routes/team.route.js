@@ -6,12 +6,14 @@ import {
   updateKills,
   getAllTeams,
   deleteTeam,
+  updateRoundPositions,
 } from "../controllers/team.controller.js";
 import { upload } from "../middlewares/multer.middleware.js";
 
 const router = Router();
 
 router.get("/", getAllTeams);
+router.post("/points", updateRoundPositions);
 router.post("/", upload.single("logo"), createTeam);
 router.put("/:teamId/kills", updateKills);
 router.put("/:teamId/elimination", handleElimination);
