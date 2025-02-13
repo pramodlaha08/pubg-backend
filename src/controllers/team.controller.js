@@ -125,10 +125,18 @@ const updateKills = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, team, "Kills updated successfully"));
 });
 
+// Update Team Model (add to roundSchema)
 
-// Handle Elimination
+
+// Modified Elimination Handler
 const handleElimination = asyncHandler(async (req, res) => {
   const { teamId } = req.params;
+  const { playerIndex } = req.body; // 0-3 (4 players per team)
+
+  // Validate player index
+  if (playerIndex === undefined || playerIndex < 0 || playerIndex > 3) {
+    throw new ApiError(400, "Invalid player index (0-3 required)");
+  }
 
   const team = await Team.findById(teamId);
   if (!team) {
@@ -144,22 +152,43 @@ const handleElimination = asyncHandler(async (req, res) => {
     throw new ApiError(400, "No active round found");
   }
 
-  if (currentRound.eliminationCount >= 4) {
-    throw new ApiError(400, "Team already eliminated in this round");
+  // Check if player is already eliminated
+  const playerIdx = currentRound.eliminatedPlayers.indexOf(playerIndex);
+  let eliminationChange = 0;
+
+  if (playerIdx === -1) {
+    // Add elimination
+    currentRound.eliminatedPlayers.push(playerIndex);
+    eliminationChange = 1;
+  } else {
+    // Remove elimination
+    currentRound.eliminatedPlayers.splice(playerIdx, 1);
+    eliminationChange = -1;
   }
 
   // Update elimination count
-  currentRound.eliminationCount += 1;
-  
-  if (currentRound.eliminationCount === 4) {
-    currentRound.status = "eliminated";
-    team.isEliminated = true;
-  }
+  currentRound.eliminationCount += eliminationChange;
+
+  // Clamp elimination count between 0-4
+  currentRound.eliminationCount = Math.max(0, 
+    Math.min(4, currentRound.eliminationCount)
+  );
+
+  // Update round status
+  currentRound.status = currentRound.eliminationCount === 4 ? 
+    "eliminated" : "alive";
+
+  // Update team elimination status
+  team.isEliminated = currentRound.eliminationCount === 4;
 
   await team.save();
-  return res
-    .status(200)
-    .json(new ApiResponse(200, team, "Elimination updated successfully"));
+  
+  return res.status(200).json(
+    new ApiResponse(200, team, 
+      `Player ${playerIndex} elimination ${
+        eliminationChange > 0 ? 'added' : 'removed'
+      } successfully`)
+  );
 });
 
 // Get All Teams

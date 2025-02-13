@@ -7,6 +7,10 @@ const roundSchema = new mongoose.Schema({
   position: { type: Number, default: 0 },
   positionPoints: { type: Number, default: 0 },
   eliminationCount: { type: Number, default: 0 },
+  eliminatedPlayers: {
+    type: [Number], // Array of player indexes (0-3)
+    default: [],
+  },
   status: { type: String, enum: ["alive", "eliminated"], default: "alive" },
 });
 
@@ -22,4 +26,4 @@ const teamSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-export const Team =  mongoose.model("Team", teamSchema);
+export const Team = mongoose.model("Team", teamSchema);
