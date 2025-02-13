@@ -7,13 +7,22 @@ import { ApiError } from "../utils/ApiError.js";
 
 // Position points mapping
 const POSITION_POINTS = {
-  1: 10, 2: 6, 3: 5, 4: 4, 5: 3, 6: 2, 7: 1, 8: 1, 9: 0, 10: 0
+  1: 10,
+  2: 6,
+  3: 5,
+  4: 4,
+  5: 3,
+  6: 2,
+  7: 1,
+  8: 1,
+  9: 0,
+  10: 0,
 };
 
 // Create Team
 const createTeam = asyncHandler(async (req, res) => {
   const { name, slot } = req.body;
-  
+
   // Validate required fields
   if (!name || !slot) {
     throw new ApiError(400, "Name and slot are required");
@@ -37,8 +46,10 @@ const createTeam = asyncHandler(async (req, res) => {
     logo: logo.url,
     rounds: [],
     currentRound: 0,
-    totalPoints: 0
+    totalPoints: 0,
   });
+
+  req.app.io.emit("team_created", team);
 
   return res
     .status(201)
@@ -57,34 +68,46 @@ const createRound = asyncHandler(async (req, res) => {
   }
 
   // Validate round sequence
-  const maxRound = Math.max(...teams.map(t => t.currentRound));
+  const maxRound = Math.max(...teams.map((t) => t.currentRound));
   if (roundNumber !== maxRound + 1) {
-    throw new ApiError(400, 
-      `Invalid round number. Current round is ${maxRound}, next should be ${maxRound + 1}`
+    throw new ApiError(
+      400,
+      `Invalid round number. Current round is ${maxRound}, next should be ${
+        maxRound + 1
+      }`
     );
   }
 
   // Process all teams
-  await Promise.all(teams.map(async team => {
-    // Create new round with default values
-    const newRound = {
-      roundNumber,
-      kills: 0,
-      killPoints: 0,
-      position: 0,
-      positionPoints: 0,
-      eliminationCount: 0,
-      status: "alive"
-    };
+  await Promise.all(
+    teams.map(async (team) => {
+      // Create new round with default values
+      const newRound = {
+        roundNumber,
+        kills: 0,
+        killPoints: 0,
+        position: 0,
+        positionPoints: 0,
+        eliminationCount: 0,
+        status: "alive",
+      };
 
-    // Update team
-    team.rounds.push(newRound);
-    team.currentRound = roundNumber;
-    team.isEliminated = false; // Reset elimination status
-    await team.save();
-  }));
+      // Update team
+      team.rounds.push(newRound);
+      team.currentRound = roundNumber;
+      team.isEliminated = false; // Reset elimination status
+      await team.save();
+    })
+  );
 
   const updatedTeams = await Team.find();
+
+  // Emit socket event
+  req.app.io.emit("round_created", {
+    roundNumber,
+    teams: updatedTeams,
+  });
+
   return res
     .status(201)
     .json(new ApiResponse(201, updatedTeams, "Round created successfully"));
@@ -106,8 +129,8 @@ const updateKills = asyncHandler(async (req, res) => {
   }
 
   // Get current round
-  const currentRound = team.rounds.find(r => 
-    r.roundNumber === team.currentRound
+  const currentRound = team.rounds.find(
+    (r) => r.roundNumber === team.currentRound
   );
 
   if (!currentRound) {
@@ -120,13 +143,21 @@ const updateKills = asyncHandler(async (req, res) => {
   team.totalPoints += kills * 2;
 
   await team.save();
+
+  // Emit socket event
+  req.app.io.to(`team_${team._id}`).emit("team_updated", team);
+  req.app.io.to(`round_${team.currentRound}`).emit("round_updated", {
+    roundNumber: team.currentRound,
+    teamId: team._id,
+    kills: currentRound.kills,
+  });
+
   return res
     .status(200)
     .json(new ApiResponse(200, team, "Kills updated successfully"));
 });
 
 // Update Team Model (add to roundSchema)
-
 
 // Modified Elimination Handler
 const handleElimination = asyncHandler(async (req, res) => {
@@ -144,8 +175,8 @@ const handleElimination = asyncHandler(async (req, res) => {
   }
 
   // Get current round
-  const currentRound = team.rounds.find(r => 
-    r.roundNumber === team.currentRound
+  const currentRound = team.rounds.find(
+    (r) => r.roundNumber === team.currentRound
   );
 
   if (!currentRound) {
@@ -170,25 +201,39 @@ const handleElimination = asyncHandler(async (req, res) => {
   currentRound.eliminationCount += eliminationChange;
 
   // Clamp elimination count between 0-4
-  currentRound.eliminationCount = Math.max(0, 
+  currentRound.eliminationCount = Math.max(
+    0,
     Math.min(4, currentRound.eliminationCount)
   );
 
   // Update round status
-  currentRound.status = currentRound.eliminationCount === 4 ? 
-    "eliminated" : "alive";
+  currentRound.status =
+    currentRound.eliminationCount === 4 ? "eliminated" : "alive";
 
   // Update team elimination status
   team.isEliminated = currentRound.eliminationCount === 4;
 
   await team.save();
-  
-  return res.status(200).json(
-    new ApiResponse(200, team, 
-      `Player ${playerIndex} elimination ${
-        eliminationChange > 0 ? 'added' : 'removed'
-      } successfully`)
-  );
+
+  // Emit socket events
+  req.app.io.to(`team_${team._id}`).emit("team_updated", team);
+  req.app.io.emit("elimination_updated", {
+    teamId: team._id,
+    roundNumber: team.currentRound,
+    eliminationCount: currentRound.eliminationCount,
+  });
+
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        team,
+        `Player ${playerIndex} elimination ${
+          eliminationChange > 0 ? "added" : "removed"
+        } successfully`
+      )
+    );
 });
 
 // Get All Teams
@@ -202,12 +247,12 @@ const getAllTeams = asyncHandler(async (req, res) => {
 // Delete Team
 const deleteTeam = asyncHandler(async (req, res) => {
   const { teamId } = req.params;
-  
+
   const team = await Team.findByIdAndDelete(teamId);
   if (!team) {
     throw new ApiError(404, "Team not found");
   }
-
+ req.app.io.emit("team_deleted", teamId);
   return res
     .status(200)
     .json(new ApiResponse(200, null, "Team deleted successfully"));
@@ -223,32 +268,41 @@ const updateRoundPositions = asyncHandler(async (req, res) => {
   }
 
   const teams = await Team.find();
-  const updates = await Promise.all(slotPositions.map(async ({ slot, position }) => {
-    const team = teams.find(t => t.slot === slot);
-    if (!team) return null;
+  const updates = await Promise.all(
+    slotPositions.map(async ({ slot, position }) => {
+      const team = teams.find((t) => t.slot === slot);
+      if (!team) return null;
 
-    const round = team.rounds.find(r => r.roundNumber === roundNumber);
-    if (!round) {
-      throw new ApiError(404, `Round ${roundNumber} not found for team ${slot}`);
-    }
+      const round = team.rounds.find((r) => r.roundNumber === roundNumber);
+      if (!round) {
+        throw new ApiError(
+          404,
+          `Round ${roundNumber} not found for team ${slot}`
+        );
+      }
 
-    // Calculate position points difference
-    const oldPoints = round.positionPoints;
-    const newPoints = POSITION_POINTS[position] || 0;
-    const pointsDifference = newPoints - oldPoints;
+      // Calculate position points difference
+      const oldPoints = round.positionPoints;
+      const newPoints = POSITION_POINTS[position] || 0;
+      const pointsDifference = newPoints - oldPoints;
 
-    // Update round details
-    round.position = position;
-    round.positionPoints = newPoints;
-    
-    // Update total points
-    team.totalPoints += pointsDifference;
+      // Update round details
+      round.position = position;
+      round.positionPoints = newPoints;
 
-    await team.save();
-    return team;
-  }));
+      // Update total points
+      team.totalPoints += pointsDifference;
 
-  const validUpdates = updates.filter(update => update !== null);
+      await team.save();
+      return team;
+    })
+  );
+
+  const validUpdates = updates.filter((update) => update !== null);
+  req.app.io.emit("positions_updated", {
+    roundNumber,
+    slotPositions,
+  });
   return res
     .status(200)
     .json(new ApiResponse(200, validUpdates, "Positions updated successfully"));
