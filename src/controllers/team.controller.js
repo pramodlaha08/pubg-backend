@@ -113,7 +113,9 @@ const createRound = asyncHandler(async (req, res) => {
     .json(new ApiResponse(201, updatedTeams, "Round created successfully"));
 });
 
-// Modified Update Kills (Now handles current round automatically)
+const KILL_POINT_MULTIPLIER = 1;
+
+// Generic Kill Update Handler
 const updateKills = asyncHandler(async (req, res) => {
   const { teamId } = req.params;
   const { kills } = req.body;
@@ -128,23 +130,21 @@ const updateKills = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Team not found");
   }
 
-  // Get current round
   const currentRound = team.rounds.find(
     (r) => r.roundNumber === team.currentRound
   );
-
   if (!currentRound) {
     throw new ApiError(400, "No active round found");
   }
 
   // Update kills and points
   currentRound.kills += kills;
-  currentRound.killPoints = currentRound.kills * 2;
-  team.totalPoints += kills * 2;
+  currentRound.killPoints = currentRound.kills * KILL_POINT_MULTIPLIER;
+  team.totalPoints += kills * KILL_POINT_MULTIPLIER;
 
   await team.save();
 
-  // Emit socket event
+  // Emit socket events
   req.app.io.to(`team_${team._id}`).emit("team_updated", team);
   req.app.io.to(`round_${team.currentRound}`).emit("round_updated", {
     roundNumber: team.currentRound,
@@ -157,6 +157,79 @@ const updateKills = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, team, "Kills updated successfully"));
 });
 
+// Add Single Kill
+const addKill = asyncHandler(async (req, res) => {
+  const { teamId } = req.params;
+
+  const team = await Team.findById(teamId);
+  if (!team) {
+    throw new ApiError(404, "Team not found");
+  }
+
+  const currentRound = team.rounds.find(
+    (r) => r.roundNumber === team.currentRound
+  );
+  if (!currentRound) {
+    throw new ApiError(400, "No active round found");
+  }
+
+  // Increment kills by 1
+  currentRound.kills += 1;
+  currentRound.killPoints = currentRound.kills * KILL_POINT_MULTIPLIER;
+  team.totalPoints += KILL_POINT_MULTIPLIER;
+
+  await team.save();
+
+  // Emit socket events
+  req.app.io.to(`team_${team._id}`).emit("team_updated", team);
+  req.app.io.to(`round_${team.currentRound}`).emit("round_updated", {
+    roundNumber: team.currentRound,
+    teamId: team._id,
+    kills: currentRound.kills,
+  });
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, team, "Kill added successfully"));
+});
+
+// Decrease Single Kill
+const decreaseKill = asyncHandler(async (req, res) => {
+  const { teamId } = req.params;
+
+  const team = await Team.findById(teamId);
+  if (!team) {
+    throw new ApiError(404, "Team not found");
+  }
+
+  const currentRound = team.rounds.find(
+    (r) => r.roundNumber === team.currentRound
+  );
+  if (!currentRound) {
+    throw new ApiError(400, "No active round found");
+  }
+
+  // Decrement kills but not below 0
+  if (currentRound.kills > 0) {
+    currentRound.kills -= 1;
+    currentRound.killPoints = currentRound.kills * KILL_POINT_MULTIPLIER;
+    team.totalPoints -= KILL_POINT_MULTIPLIER;
+  }
+
+  await team.save();
+
+  // Emit socket events
+  req.app.io.to(`team_${team._id}`).emit("team_updated", team);
+  req.app.io.to(`round_${team.currentRound}`).emit("round_updated", {
+    roundNumber: team.currentRound,
+    teamId: team._id,
+    kills: currentRound.kills,
+  });
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, team, "Kill decreased successfully"));
+});
 // Update Team Model (add to roundSchema)
 
 // Modified Elimination Handler
@@ -316,4 +389,6 @@ export {
   getAllTeams,
   deleteTeam,
   updateRoundPositions,
+  addKill,
+  decreaseKill,
 };
