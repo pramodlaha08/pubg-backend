@@ -41,7 +41,7 @@ io.on("connection", (socket) => {
 // Database connection and server start
 connectDB()
   .then(() => {
-    server.listen(port, () => {
+    server.listen(port,"0.0.0.0", () => {
       console.log(`Server listening on ${port}`);
     });
 
