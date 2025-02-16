@@ -24,7 +24,7 @@ router.post("/rounds", createRound);
 router.delete("/:teamId", deleteTeam);
 router.post("/:teamId/add-kill", addKill);
 router.post("/:teamId/decrease-kill", decreaseKill);
-router.delete("rounds", deleteRoundFromTeams)
+router.delete("/rounds/delete", deleteRoundFromTeams)
 
 
 export default router;

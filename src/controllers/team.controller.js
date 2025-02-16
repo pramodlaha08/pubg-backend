@@ -4,6 +4,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { uploadOnCloudinary } from "../utils/cloudinary.js";
 import { ApiError } from "../utils/ApiError.js";
+import mongoose from "mongoose";
 
 // Position points mapping
 const POSITION_POINTS = {
@@ -141,72 +142,110 @@ const createRound = asyncHandler(async (req, res) => {
 });
 
 const deleteRoundFromTeams = asyncHandler(async (req, res) => {
-  const { teamIds, roundNumber } = req.body; // Accept team IDs as an array in the request body
+  const { slots, roundNumber } = req.body;
 
-  if (!Array.isArray(teamIds) || teamIds.length === 0) {
-    throw new ApiError(400, "teamIds must be a non-empty array");
-  }
-  if (typeof roundNumber !== "number" || roundNumber < 1) {
-    throw new ApiError(400, "Invalid round number");
+  // Enhanced validation
+  if (!Array.isArray(slots) || slots.length === 0) {
+    throw new ApiError(400, "Slots must be a non-empty array of numbers");
   }
 
-  // Find teams by _id
-  const teams = await Team.find({ _id: { $in: teamIds } });
+  if (slots.some((s) => typeof s !== "number")) {
+    throw new ApiError(400, "All slots must be numbers");
+  }
 
+  if (!Number.isInteger(roundNumber) || roundNumber < 1) {
+    throw new ApiError(400, "Round number must be a positive integer");
+  }
+
+  // Get teams with error handling
+  const teams = await Team.find({ slot: { $in: slots } });
   if (teams.length === 0) {
-    throw new ApiError(404, "No teams found for the provided IDs");
+    throw new ApiError(404, "No teams found for provided slots");
   }
 
-  // Update teams in parallel
-  const updatedTeams = await Promise.all(
+  // Process teams with proper error tracking
+  const results = await Promise.allSettled(
     teams.map(async (team) => {
-      // Use MongoDB's `$pull` to remove the round without manually modifying the array
-      const updatedTeam = await Team.findByIdAndUpdate(
-        team._id,
-        {
-          $pull: { rounds: { roundNumber: roundNumber } },
-        },
-        { new: true }
-      );
-
-      if (!updatedTeam) return null;
-
-      // Recalculate currentRound after deletion
-      const remainingRounds = updatedTeam.rounds.map((r) => r.roundNumber);
-      updatedTeam.currentRound =
-        remainingRounds.length > 0 ? Math.max(...remainingRounds) : 0;
-
-      // Update elimination status
-      if (updatedTeam.currentRound > 0) {
-        const currentRound = updatedTeam.rounds.find(
-          (r) => r.roundNumber === updatedTeam.currentRound
+      try {
+        const roundIndex = team.rounds.findIndex(
+          (r) => r.roundNumber === roundNumber
         );
-        updatedTeam.isEliminated = currentRound?.eliminationCount >= 4;
-      } else {
-        updatedTeam.isEliminated = false;
-      }
 
-      await updatedTeam.save();
-      return updatedTeam;
+        if (roundIndex === -1) {
+          throw new ApiError(
+            404,
+            `Round ${roundNumber} not found for team ${team.slot}`
+          );
+        }
+
+        const deletedRound = team.rounds[roundIndex];
+        team.totalPoints -=
+          deletedRound.killPoints + deletedRound.positionPoints;
+        team.rounds.splice(roundIndex, 1);
+
+        // Update current round
+        if (team.currentRound === roundNumber) {
+          team.currentRound =
+            team.rounds.length > 0
+              ? Math.max(...team.rounds.map((r) => r.roundNumber))
+              : 0;
+        }
+
+        // Update elimination status
+        const currentRound = team.rounds.find(
+          (r) => r.roundNumber === team.currentRound
+        );
+        team.isEliminated = currentRound?.eliminationCount >= 4;
+
+        await team.save();
+        return { success: true, team };
+      } catch (error) {
+        return {
+          success: false,
+          team: team.slot,
+          error: error.message,
+        };
+      }
     })
   );
 
-  // Remove null results (if any teams failed to update)
-  const successfulTeams = updatedTeams.filter((team) => team !== null);
+  // Process results
+  const successfulTeams = [];
+  const errors = [];
 
-  // Emit socket event for successful deletion
-  req.app.io.emit("round_deleted", {
-    roundNumber,
-    teams: successfulTeams,
+  results.forEach((result) => {
+    if (result.value.success) {
+      successfulTeams.push(result.value.team);
+    } else {
+      errors.push({
+        team: result.value.team,
+        error: result.value.error,
+      });
+    }
   });
 
-  res
+  // Handle partial success
+  if (errors.length > 0) {
+    const errorDetails = errors
+      .map((e) => `Team ${e.team}: ${e.error}`)
+      .join(", ");
+    throw new ApiError(207, `Partial success: ${errorDetails}`);
+  }
+
+  // Emit socket event
+  req.app.io.emit("round_deleted", {
+    roundNumber,
+    affectedSlots: slots,
+    success: true,
+  });
+
+  return res
     .status(200)
     .json(
       new ApiResponse(
         200,
-        successfulTeams,
-        "Round deleted successfully from specified teams"
+        { deletedRound: roundNumber, affectedTeams: successfulTeams },
+        "Rounds deleted successfully"
       )
     );
 });
@@ -240,13 +279,7 @@ const updateKills = asyncHandler(async (req, res) => {
 
   await team.save();
 
-  // Emit socket events
-  req.app.io.to(`team_${team._id}`).emit("team_updated", team);
-  req.app.io.to(`round_${team.currentRound}`).emit("round_updated", {
-    roundNumber: team.currentRound,
-    teamId: team._id,
-    kills: currentRound.kills,
-  });
+
 
   return res
     .status(200)
@@ -276,13 +309,6 @@ const addKill = asyncHandler(async (req, res) => {
 
   await team.save();
 
-  // Emit socket events
-  req.app.io.to(`team_${team._id}`).emit("team_updated", team);
-  req.app.io.to(`round_${team.currentRound}`).emit("round_updated", {
-    roundNumber: team.currentRound,
-    teamId: team._id,
-    kills: currentRound.kills,
-  });
 
   return res
     .status(200)
@@ -314,13 +340,6 @@ const decreaseKill = asyncHandler(async (req, res) => {
 
   await team.save();
 
-  // Emit socket events
-  req.app.io.to(`team_${team._id}`).emit("team_updated", team);
-  req.app.io.to(`round_${team.currentRound}`).emit("round_updated", {
-    roundNumber: team.currentRound,
-    teamId: team._id,
-    kills: currentRound.kills,
-  });
 
   return res
     .status(200)
@@ -384,13 +403,7 @@ const handleElimination = asyncHandler(async (req, res) => {
 
   await team.save();
 
-  // Emit socket events
-  req.app.io.to(`team_${team._id}`).emit("team_updated", team);
-  req.app.io.emit("elimination_updated", {
-    teamId: team._id,
-    roundNumber: team.currentRound,
-    eliminationCount: currentRound.eliminationCount,
-  });
+
 
   return res
     .status(200)
@@ -416,6 +429,9 @@ const getAllTeams = asyncHandler(async (req, res) => {
 // Delete Team
 const deleteTeam = asyncHandler(async (req, res) => {
   const { teamId } = req.params;
+
+  if(!mongoose.isValidObjectId(teamId))
+    throw new ApiError(400, "Invalid team ID");
 
   const team = await Team.findByIdAndDelete(teamId);
   if (!team) {
