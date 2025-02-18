@@ -9,7 +9,8 @@ import {
   updateRoundPositions,
   addKill,
   decreaseKill,
-  deleteRoundFromTeams
+  deleteRoundFromTeams,
+  getTeamsByRound
 } from "../controllers/team.controller.js";
 import { upload } from "../middlewares/multer.middleware.js";
 
@@ -25,6 +26,7 @@ router.delete("/:teamId", deleteTeam);
 router.post("/:teamId/add-kill", addKill);
 router.post("/:teamId/decrease-kill", decreaseKill);
 router.delete("/rounds/delete", deleteRoundFromTeams)
+router.get("/match/:roundNumber",getTeamsByRound);
 
 
 export default router;

@@ -493,6 +493,52 @@ const updateRoundPositions = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, validUpdates, "Positions updated successfully"));
 });
 
+const getTeamsByRound = async (req, res) => {
+  try {
+    const { roundNumber } = req.params;
+    if (!roundNumber) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "Round number is required",
+        success: false,
+      });
+    }
+
+    const teams = await Team.find({ "rounds.roundNumber": roundNumber });
+
+    if (!teams.length) {
+      return res.status(404).json({
+        statusCode: 404,
+        message: "No teams found for the given round number",
+        success: false,
+      });
+    }
+
+    const filteredTeams = teams.map((team) => {
+      return {
+        ...team.toObject(),
+        rounds: team.rounds.filter(
+          (round) => round.roundNumber === Number(roundNumber)
+        ),
+      };
+    });
+
+    res.status(200).json({
+      statusCode: 200,
+      data: filteredTeams,
+      message: "Teams retrieved successfully",
+      success: true,
+    });
+  } catch (error) {
+    console.error("Error fetching teams by round:", error);
+    res.status(500).json({
+      statusCode: 500,
+      message: "Internal Server Error",
+      success: false,
+    });
+  }
+};
+
 export {
   createTeam,
   createRound,
@@ -504,4 +550,5 @@ export {
   addKill,
   decreaseKill,
   deleteRoundFromTeams,
+  getTeamsByRound,
 };
