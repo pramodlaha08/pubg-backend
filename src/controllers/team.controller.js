@@ -67,6 +67,9 @@ const createRound = asyncHandler(async (req, res) => {
   if (!Array.isArray(slots) || slots.length === 0) {
     throw new ApiError(400, "Slots must be a non-empty array");
   }
+    if (!Number.isInteger(roundNumber) || roundNumber < 1) {
+      throw new ApiError(400, "Round number must be a positive integer");
+    }
 
   // Position points mapping
   const POSITION_POINTS = {
