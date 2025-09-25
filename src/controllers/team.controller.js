@@ -8,16 +8,16 @@ import mongoose from "mongoose";
 
 // Position points mapping
 const POSITION_POINTS = {
-  1: 12,
-  2: 9,
-  3: 8,
-  4: 7,
+  1: 15,
+  2: 12,
+  3: 10,
+  4: 8,
   5: 6,
-  6: 5,
-  7: 4,
-  8: 3,
-  9: 2,
-  10: 1,
+  6: 4,
+  7: 2,
+  8: 1,
+  9: 0,
+  10: 0,
 };
 const KILL_POINT_MULTIPLIER = 1;
 
@@ -67,19 +67,19 @@ const createRound = asyncHandler(async (req, res) => {
   if (!Array.isArray(slots) || slots.length === 0) {
     throw new ApiError(400, "Slots must be a non-empty array");
   }
-    if (!Number.isInteger(roundNumber) || roundNumber < 1) {
-      throw new ApiError(400, "Round number must be a positive integer");
-    }
+  if (!Number.isInteger(roundNumber) || roundNumber < 1) {
+    throw new ApiError(400, "Round number must be a positive integer");
+  }
 
   // Position points mapping
   const POSITION_POINTS = {
-    1: 10,
-    2: 6,
-    3: 5,
-    4: 4,
-    5: 3,
-    6: 2,
-    7: 1,
+    1: 15,
+    2: 12,
+    3: 10,
+    4: 8,
+    5: 6,
+    6: 4,
+    7: 2,
     8: 1,
     9: 0,
     10: 0,
@@ -282,8 +282,6 @@ const updateKills = asyncHandler(async (req, res) => {
 
   await team.save();
 
-
-
   return res
     .status(200)
     .json(new ApiResponse(200, team, "Kills updated successfully"));
@@ -311,7 +309,6 @@ const addKill = asyncHandler(async (req, res) => {
   team.totalPoints += KILL_POINT_MULTIPLIER;
 
   await team.save();
-
 
   return res
     .status(200)
@@ -342,7 +339,6 @@ const decreaseKill = asyncHandler(async (req, res) => {
   }
 
   await team.save();
-
 
   return res
     .status(200)
@@ -406,8 +402,6 @@ const handleElimination = asyncHandler(async (req, res) => {
 
   await team.save();
 
-
-
   return res
     .status(200)
     .json(
@@ -433,7 +427,7 @@ const getAllTeams = asyncHandler(async (req, res) => {
 const deleteTeam = asyncHandler(async (req, res) => {
   const { teamId } = req.params;
 
-  if(!mongoose.isValidObjectId(teamId))
+  if (!mongoose.isValidObjectId(teamId))
     throw new ApiError(400, "Invalid team ID");
 
   const team = await Team.findByIdAndDelete(teamId);
