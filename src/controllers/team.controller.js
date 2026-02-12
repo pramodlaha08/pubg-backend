@@ -8,16 +8,14 @@ import mongoose from "mongoose";
 
 // Position points mapping
 const POSITION_POINTS = {
-  1: 12,
-  2: 9,
-  3: 8,
-  4: 7,
-  5: 6,
-  6: 5,
-  7: 4,
-  8: 3,
-  9: 2,
-  10: 1,
+  1: 10,
+  2: 8,
+  3: 6,
+  4: 5,
+  5: 4,
+  6: 3,
+  7: 2,
+  8: 1,
 };
 const KILL_POINT_MULTIPLIER = 1;
 
