@@ -206,7 +206,8 @@ const deleteRoundFromTeams = asyncHandler(async (req, res) => {
         }
 
         const deletedRound = team.rounds[roundIndex];
-        const deductedPoints = deletedRound.killPoints + deletedRound.positionPoints;
+        const deductedPoints =
+          deletedRound.killPoints + deletedRound.positionPoints;
         const oldTotalPoints = team.totalPoints;
 
         team.totalPoints -= deductedPoints;
@@ -346,7 +347,7 @@ const updateKills = asyncHandler(async (req, res) => {
     kills: currentRound.kills,
   });
 
-  await safeCreateTeamLog({
+  void safeCreateTeamLog({
     req,
     eventType: "KILL_UPDATED",
     severity: kills > 0 ? "highlight" : "info",
@@ -414,7 +415,7 @@ const addKill = asyncHandler(async (req, res) => {
     kills: currentRound.kills,
   });
 
-  await safeCreateTeamLog({
+  void safeCreateTeamLog({
     req,
     eventType: "KILL_ADDED",
     severity: "highlight",
@@ -485,7 +486,7 @@ const decreaseKill = asyncHandler(async (req, res) => {
     kills: currentRound.kills,
   });
 
-  await safeCreateTeamLog({
+  void safeCreateTeamLog({
     req,
     eventType: "KILL_DECREASED",
     severity: "info",
@@ -580,7 +581,7 @@ const handleElimination = asyncHandler(async (req, res) => {
     change: eliminationChange,
   });
 
-  await safeCreateTeamLog({
+  void safeCreateTeamLog({
     req,
     eventType: "ELIMINATION_UPDATED",
     severity: eliminationChange > 0 ? "highlight" : "info",
@@ -595,7 +596,11 @@ const handleElimination = asyncHandler(async (req, res) => {
         current: currentRound.eliminationCount,
         delta: eliminationChange,
       },
-      { field: "round.status", previous: oldStatus, current: currentRound.status },
+      {
+        field: "round.status",
+        previous: oldStatus,
+        current: currentRound.status,
+      },
       {
         field: "round.eliminatedPlayers",
         previous: null,
@@ -615,7 +620,7 @@ const handleElimination = asyncHandler(async (req, res) => {
       eliminationCount: currentRound.eliminationCount,
     });
 
-    await safeCreateTeamLog({
+    void safeCreateTeamLog({
       req,
       eventType: "TEAM_ELIMINATED",
       severity: "critical",
