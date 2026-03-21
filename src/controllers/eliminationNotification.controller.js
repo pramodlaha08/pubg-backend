@@ -3,6 +3,7 @@ import { Team } from '../models/team.model.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
+import SQUAD_CONFIG from '../config/squadSize.js';
 
 // Track or create elimination
 export const trackElimination = asyncHandler(async (req, res) => {
@@ -22,7 +23,7 @@ export const trackElimination = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'Round not found');
   }
 
-  const isEliminated = round.eliminationCount >= 4;
+  const isEliminated = round.eliminationCount >= SQUAD_CONFIG.fullEliminationCount;
 
   const notification = await EliminationNotification.findOneAndUpdate(
     { teamId, roundNumber },
@@ -93,7 +94,7 @@ export const syncEliminations = asyncHandler(async (req, res) => {
 
   for (const team of teams) {
     for (const round of team.rounds) {
-      const isEliminated = round.eliminationCount >= 4;
+      const isEliminated = round.eliminationCount >= SQUAD_CONFIG.fullEliminationCount;
       const status = isEliminated ? 'eliminated' : 'alive';
 
       let notification = await EliminationNotification.findOne({

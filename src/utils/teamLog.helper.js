@@ -1,4 +1,5 @@
 import { TeamLog } from "../models/teamLog.model.js";
+import SQUAD_CONFIG from "../config/squadSize.js";
 
 const formatDelta = (delta) => {
   if (typeof delta !== "number") return "";
@@ -89,11 +90,11 @@ export const logTemplates = {
     change,
   }) => ({
     title: `Knock State Changed: ${team.name}`,
-    message: `Round ${roundNumber}: Player #${playerIndex + 1} ${change > 0 ? "knocked/eliminated" : "revived/removed"}. ${team.name} now has ${eliminationCount}/4 eliminated players.`,
+    message: `Round ${roundNumber}: Player #${playerIndex + 1} ${change > 0 ? "knocked/eliminated" : "revived/removed"}. ${team.name} now has ${eliminationCount}/${SQUAD_CONFIG.fullEliminationCount} eliminated players.`,
   }),
   teamEliminated: ({ team, roundNumber, eliminationCount }) => ({
     title: `Team Eliminated: ${team.name}`,
-    message: `Round ${roundNumber}: ${team.name} is out (${eliminationCount}/4). Final running total: ${team.totalPoints} pts.`,
+    message: `Round ${roundNumber}: ${team.name} is out (${eliminationCount}/${SQUAD_CONFIG.fullEliminationCount}). Final running total: ${team.totalPoints} pts.`,
   }),
   positionUpdated: ({
     team,

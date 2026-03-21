@@ -5,6 +5,7 @@ import { ApiResponse } from "../utils/ApiResponse.js";
 import { uploadOnCloudinary } from "../utils/cloudinary.js";
 import { ApiError } from "../utils/ApiError.js";
 import { createTeamLogEntry, logTemplates } from "../utils/teamLog.helper.js";
+import SQUAD_CONFIG from "../config/squadSize.js";
 import mongoose from "mongoose";
 
 // Position points mapping
@@ -223,7 +224,7 @@ const deleteRoundFromTeams = asyncHandler(async (req, res) => {
         const currentRound = team.rounds.find(
           (r) => r.roundNumber === team.currentRound
         );
-        team.isEliminated = currentRound?.eliminationCount >= 4;
+        team.isEliminated = currentRound?.eliminationCount >= SQUAD_CONFIG.fullEliminationCount;
 
         await team.save();
 
@@ -529,8 +530,8 @@ const handleElimination = asyncHandler(async (req, res) => {
   const { teamId } = req.params;
   const { playerIndex } = req.body;
 
-  if (playerIndex === undefined || playerIndex < 0 || playerIndex > 3) {
-    throw new ApiError(400, "Invalid player index (0-3 required)");
+  if (playerIndex === undefined || !SQUAD_CONFIG.isValidPlayerIndex(playerIndex)) {
+    throw new ApiError(400, `Invalid player index (0-${SQUAD_CONFIG.maxPlayerIndex} required)`);
   }
 
   const team = await Team.findById(teamId);
@@ -562,14 +563,14 @@ const handleElimination = asyncHandler(async (req, res) => {
   currentRound.eliminationCount += eliminationChange;
   currentRound.eliminationCount = Math.max(
     0,
-    Math.min(4, currentRound.eliminationCount)
+    Math.min(SQUAD_CONFIG.fullEliminationCount, currentRound.eliminationCount)
   );
 
   currentRound.status =
-    currentRound.eliminationCount === 4 ? "eliminated" : "alive";
+    currentRound.eliminationCount === SQUAD_CONFIG.fullEliminationCount ? "eliminated" : "alive";
 
   const oldTeamEliminated = team.isEliminated;
-  team.isEliminated = currentRound.eliminationCount === 4;
+  team.isEliminated = currentRound.eliminationCount === SQUAD_CONFIG.fullEliminationCount;
 
   await team.save();
 
@@ -613,7 +614,7 @@ const handleElimination = asyncHandler(async (req, res) => {
     },
   });
 
-  if (currentRound.eliminationCount === 4) {
+  if (currentRound.eliminationCount === SQUAD_CONFIG.fullEliminationCount) {
     const eliminatedTemplate = logTemplates.teamEliminated({
       team,
       roundNumber: team.currentRound,
