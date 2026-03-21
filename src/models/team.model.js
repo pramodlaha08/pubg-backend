@@ -20,6 +20,7 @@ const teamSchema = new mongoose.Schema(
     logo: { type: String, default: "" },
     slot: { type: Number, required: true, unique: true },
     currentRound: { type: Number, default: 0 },
+    isEliminated: { type: Boolean, default: false },
     totalPoints: { type: Number, default: 0 },
     rounds: [roundSchema],
   },

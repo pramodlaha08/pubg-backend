@@ -4,6 +4,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { uploadOnCloudinary } from "../utils/cloudinary.js";
 import { ApiError } from "../utils/ApiError.js";
+import { createTeamLogEntry, logTemplates } from "../utils/teamLog.helper.js";
 import mongoose from "mongoose";
 
 // Position points mapping
@@ -19,34 +20,59 @@ const POSITION_POINTS = {
 };
 const KILL_POINT_MULTIPLIER = 1;
 
+const safeCreateTeamLog = async (payload) => {
+  try {
+    await createTeamLogEntry(payload);
+  } catch (error) {
+    console.error("Failed to create team log:", error.message);
+  }
+};
+
 // Create Team
 const createTeam = asyncHandler(async (req, res) => {
   const { name, slot } = req.body;
 
-  // Validate required fields
   if (!name || !slot) {
     throw new ApiError(400, "Name and slot are required");
   }
 
-  // Check for existing slot
   const existingSlot = await Team.findOne({ slot });
   if (existingSlot) {
     throw new ApiError(400, `Slot ${slot} already occupied`);
   }
 
-  // Handle logo upload
   const logoLocalPath = req.file?.path;
   if (!logoLocalPath) throw new ApiError(400, "Logo is required");
   const logo = await uploadOnCloudinary(logoLocalPath);
 
-  // Create team
   const team = await Team.create({
     name,
     slot,
     logo: logo.url,
     rounds: [],
     currentRound: 0,
+    isEliminated: false,
     totalPoints: 0,
+  });
+
+  const template = logTemplates.teamCreated({ team });
+  await safeCreateTeamLog({
+    req,
+    eventType: "TEAM_CREATED",
+    severity: "highlight",
+    team,
+    title: template.title,
+    message: template.message,
+    changes: [
+      { field: "name", previous: null, current: team.name },
+      { field: "slot", previous: null, current: team.slot },
+      {
+        field: "totalPoints",
+        previous: null,
+        current: team.totalPoints,
+        delta: 0,
+      },
+    ],
   });
 
   req.app.io.emit("team_created", team);
@@ -57,11 +83,9 @@ const createTeam = asyncHandler(async (req, res) => {
 });
 
 // Create New Round
-// Create New Round (Modified)
 const createRound = asyncHandler(async (req, res) => {
   const { slots, roundNumber } = req.body;
 
-  // Validate input
   if (!Array.isArray(slots) || slots.length === 0) {
     throw new ApiError(400, "Slots must be a non-empty array");
   }
@@ -69,30 +93,13 @@ const createRound = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Round number must be a positive integer");
   }
 
-  // Position points mapping
-  const POSITION_POINTS = {
-    1: 15,
-    2: 12,
-    3: 10,
-    4: 8,
-    5: 6,
-    6: 4,
-    7: 2,
-    8: 1,
-    9: 0,
-    10: 0,
-  };
-
-  // Get teams by slots
   const teams = await Team.find({ slot: { $in: slots } });
   if (teams.length === 0) {
     throw new ApiError(404, "No teams found for provided slots");
   }
 
-  // Process teams in parallel
   await Promise.all(
     teams.map(async (team) => {
-      // Check for existing round
       if (team.rounds.some((r) => r.roundNumber === roundNumber)) {
         throw new ApiError(
           400,
@@ -100,7 +107,7 @@ const createRound = asyncHandler(async (req, res) => {
         );
       }
 
-      // Create new round with default values
+      const previousCurrentRound = team.currentRound;
       const newRound = {
         roundNumber,
         kills: 0,
@@ -112,7 +119,6 @@ const createRound = asyncHandler(async (req, res) => {
         status: "alive",
       };
 
-      // Update current round number if needed
       if (roundNumber > team.currentRound) {
         team.currentRound = roundNumber;
       }
@@ -120,12 +126,35 @@ const createRound = asyncHandler(async (req, res) => {
       team.rounds.push(newRound);
       team.isEliminated = false;
       await team.save();
+
+      const template = logTemplates.roundCreated({ team, roundNumber });
+      await safeCreateTeamLog({
+        req,
+        eventType: "ROUND_CREATED",
+        severity: "info",
+        team,
+        roundNumber,
+        title: template.title,
+        message: template.message,
+        changes: [
+          {
+            field: "currentRound",
+            previous: previousCurrentRound,
+            current: team.currentRound,
+            delta: team.currentRound - previousCurrentRound,
+          },
+          {
+            field: "rounds",
+            previous: "without-round",
+            current: `round-${roundNumber}-added`,
+          },
+        ],
+      });
     })
   );
 
   const updatedTeams = await Team.find({ slot: { $in: slots } });
 
-  // Emit socket event
   req.app.io.emit("round_created", {
     roundNumber,
     teams: updatedTeams,
@@ -145,7 +174,6 @@ const createRound = asyncHandler(async (req, res) => {
 const deleteRoundFromTeams = asyncHandler(async (req, res) => {
   const { slots, roundNumber } = req.body;
 
-  // Enhanced validation
   if (!Array.isArray(slots) || slots.length === 0) {
     throw new ApiError(400, "Slots must be a non-empty array of numbers");
   }
@@ -158,13 +186,11 @@ const deleteRoundFromTeams = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Round number must be a positive integer");
   }
 
-  // Get teams with error handling
   const teams = await Team.find({ slot: { $in: slots } });
   if (teams.length === 0) {
     throw new ApiError(404, "No teams found for provided slots");
   }
 
-  // Process teams with proper error tracking
   const results = await Promise.allSettled(
     teams.map(async (team) => {
       try {
@@ -180,11 +206,12 @@ const deleteRoundFromTeams = asyncHandler(async (req, res) => {
         }
 
         const deletedRound = team.rounds[roundIndex];
-        team.totalPoints -=
-          deletedRound.killPoints + deletedRound.positionPoints;
+        const deductedPoints = deletedRound.killPoints + deletedRound.positionPoints;
+        const oldTotalPoints = team.totalPoints;
+
+        team.totalPoints -= deductedPoints;
         team.rounds.splice(roundIndex, 1);
 
-        // Update current round
         if (team.currentRound === roundNumber) {
           team.currentRound =
             team.rounds.length > 0
@@ -192,13 +219,46 @@ const deleteRoundFromTeams = asyncHandler(async (req, res) => {
               : 0;
         }
 
-        // Update elimination status
         const currentRound = team.rounds.find(
           (r) => r.roundNumber === team.currentRound
         );
         team.isEliminated = currentRound?.eliminationCount >= 4;
 
         await team.save();
+
+        const template = logTemplates.roundDeleted({
+          team,
+          roundNumber,
+          deductedPoints,
+        });
+
+        await safeCreateTeamLog({
+          req,
+          eventType: "ROUND_DELETED",
+          severity: "highlight",
+          team,
+          roundNumber,
+          title: template.title,
+          message: template.message,
+          changes: [
+            {
+              field: "team.totalPoints",
+              previous: oldTotalPoints,
+              current: team.totalPoints,
+              delta: team.totalPoints - oldTotalPoints,
+            },
+            {
+              field: "roundDeleted",
+              previous: `round-${roundNumber}`,
+              current: "removed",
+            },
+          ],
+          meta: {
+            deductedPoints,
+            oldRoundState: deletedRound,
+          },
+        });
+
         return { success: true, team };
       } catch (error) {
         return {
@@ -210,7 +270,6 @@ const deleteRoundFromTeams = asyncHandler(async (req, res) => {
     })
   );
 
-  // Process results
   const successfulTeams = [];
   const errors = [];
 
@@ -225,7 +284,6 @@ const deleteRoundFromTeams = asyncHandler(async (req, res) => {
     }
   });
 
-  // Handle partial success
   if (errors.length > 0) {
     const errorDetails = errors
       .map((e) => `Team ${e.team}: ${e.error}`)
@@ -233,7 +291,6 @@ const deleteRoundFromTeams = asyncHandler(async (req, res) => {
     throw new ApiError(207, `Partial success: ${errorDetails}`);
   }
 
-  // Emit socket event
   req.app.io.emit("round_deleted", {
     roundNumber,
     affectedSlots: slots,
@@ -256,7 +313,6 @@ const updateKills = asyncHandler(async (req, res) => {
   const { teamId } = req.params;
   const { kills } = req.body;
 
-  // Validate input
   if (typeof kills !== "number" || kills < 0) {
     throw new ApiError(400, "Invalid kills value");
   }
@@ -273,12 +329,52 @@ const updateKills = asyncHandler(async (req, res) => {
     throw new ApiError(400, "No active round found");
   }
 
-  // Update kills and points
+  const oldKills = currentRound.kills;
+  const oldKillPoints = currentRound.killPoints;
+  const oldTotalPoints = team.totalPoints;
+
   currentRound.kills += kills;
   currentRound.killPoints = currentRound.kills * KILL_POINT_MULTIPLIER;
   team.totalPoints += kills * KILL_POINT_MULTIPLIER;
 
   await team.save();
+
+  const template = logTemplates.killUpdated({
+    team,
+    roundNumber: team.currentRound,
+    delta: kills,
+    kills: currentRound.kills,
+  });
+
+  await safeCreateTeamLog({
+    req,
+    eventType: "KILL_UPDATED",
+    severity: kills > 0 ? "highlight" : "info",
+    team,
+    roundNumber: team.currentRound,
+    title: template.title,
+    message: template.message,
+    changes: [
+      {
+        field: "round.kills",
+        previous: oldKills,
+        current: currentRound.kills,
+        delta: currentRound.kills - oldKills,
+      },
+      {
+        field: "round.killPoints",
+        previous: oldKillPoints,
+        current: currentRound.killPoints,
+        delta: currentRound.killPoints - oldKillPoints,
+      },
+      {
+        field: "team.totalPoints",
+        previous: oldTotalPoints,
+        current: team.totalPoints,
+        delta: team.totalPoints - oldTotalPoints,
+      },
+    ],
+  });
 
   return res
     .status(200)
@@ -301,12 +397,52 @@ const addKill = asyncHandler(async (req, res) => {
     throw new ApiError(400, "No active round found");
   }
 
-  // Increment kills by 1
+  const oldKills = currentRound.kills;
+  const oldKillPoints = currentRound.killPoints;
+  const oldTotalPoints = team.totalPoints;
+
   currentRound.kills += 1;
   currentRound.killPoints = currentRound.kills * KILL_POINT_MULTIPLIER;
   team.totalPoints += KILL_POINT_MULTIPLIER;
 
   await team.save();
+
+  const template = logTemplates.killUpdated({
+    team,
+    roundNumber: team.currentRound,
+    delta: 1,
+    kills: currentRound.kills,
+  });
+
+  await safeCreateTeamLog({
+    req,
+    eventType: "KILL_ADDED",
+    severity: "highlight",
+    team,
+    roundNumber: team.currentRound,
+    title: template.title,
+    message: template.message,
+    changes: [
+      {
+        field: "round.kills",
+        previous: oldKills,
+        current: currentRound.kills,
+        delta: 1,
+      },
+      {
+        field: "round.killPoints",
+        previous: oldKillPoints,
+        current: currentRound.killPoints,
+        delta: currentRound.killPoints - oldKillPoints,
+      },
+      {
+        field: "team.totalPoints",
+        previous: oldTotalPoints,
+        current: team.totalPoints,
+        delta: team.totalPoints - oldTotalPoints,
+      },
+    ],
+  });
 
   return res
     .status(200)
@@ -329,7 +465,10 @@ const decreaseKill = asyncHandler(async (req, res) => {
     throw new ApiError(400, "No active round found");
   }
 
-  // Decrement kills but not below 0
+  const oldKills = currentRound.kills;
+  const oldKillPoints = currentRound.killPoints;
+  const oldTotalPoints = team.totalPoints;
+
   if (currentRound.kills > 0) {
     currentRound.kills -= 1;
     currentRound.killPoints = currentRound.kills * KILL_POINT_MULTIPLIER;
@@ -338,18 +477,57 @@ const decreaseKill = asyncHandler(async (req, res) => {
 
   await team.save();
 
+  const killDelta = currentRound.kills - oldKills;
+  const template = logTemplates.killUpdated({
+    team,
+    roundNumber: team.currentRound,
+    delta: killDelta,
+    kills: currentRound.kills,
+  });
+
+  await safeCreateTeamLog({
+    req,
+    eventType: "KILL_DECREASED",
+    severity: "info",
+    team,
+    roundNumber: team.currentRound,
+    title: template.title,
+    message: template.message,
+    changes: [
+      {
+        field: "round.kills",
+        previous: oldKills,
+        current: currentRound.kills,
+        delta: killDelta,
+      },
+      {
+        field: "round.killPoints",
+        previous: oldKillPoints,
+        current: currentRound.killPoints,
+        delta: currentRound.killPoints - oldKillPoints,
+      },
+      {
+        field: "team.totalPoints",
+        previous: oldTotalPoints,
+        current: team.totalPoints,
+        delta: team.totalPoints - oldTotalPoints,
+      },
+    ],
+    meta: {
+      noChange: oldKills === currentRound.kills,
+    },
+  });
+
   return res
     .status(200)
     .json(new ApiResponse(200, team, "Kill decreased successfully"));
 });
-// Update Team Model (add to roundSchema)
 
 // Modified Elimination Handler
 const handleElimination = asyncHandler(async (req, res) => {
   const { teamId } = req.params;
-  const { playerIndex } = req.body; // 0-3 (4 players per team)
+  const { playerIndex } = req.body;
 
-  // Validate player index
   if (playerIndex === undefined || playerIndex < 0 || playerIndex > 3) {
     throw new ApiError(400, "Invalid player index (0-3 required)");
   }
@@ -359,7 +537,6 @@ const handleElimination = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Team not found");
   }
 
-  // Get current round
   const currentRound = team.rounds.find(
     (r) => r.roundNumber === team.currentRound
   );
@@ -368,37 +545,94 @@ const handleElimination = asyncHandler(async (req, res) => {
     throw new ApiError(400, "No active round found");
   }
 
-  // Check if player is already eliminated
   const playerIdx = currentRound.eliminatedPlayers.indexOf(playerIndex);
   let eliminationChange = 0;
+  const oldEliminationCount = currentRound.eliminationCount;
+  const oldStatus = currentRound.status;
 
   if (playerIdx === -1) {
-    // Add elimination
     currentRound.eliminatedPlayers.push(playerIndex);
     eliminationChange = 1;
   } else {
-    // Remove elimination
     currentRound.eliminatedPlayers.splice(playerIdx, 1);
     eliminationChange = -1;
   }
 
-  // Update elimination count
   currentRound.eliminationCount += eliminationChange;
-
-  // Clamp elimination count between 0-4
   currentRound.eliminationCount = Math.max(
     0,
     Math.min(4, currentRound.eliminationCount)
   );
 
-  // Update round status
   currentRound.status =
     currentRound.eliminationCount === 4 ? "eliminated" : "alive";
 
-  // Update team elimination status
+  const oldTeamEliminated = team.isEliminated;
   team.isEliminated = currentRound.eliminationCount === 4;
 
   await team.save();
+
+  const toggleTemplate = logTemplates.eliminationUpdated({
+    team,
+    roundNumber: team.currentRound,
+    playerIndex,
+    eliminationCount: currentRound.eliminationCount,
+    change: eliminationChange,
+  });
+
+  await safeCreateTeamLog({
+    req,
+    eventType: "ELIMINATION_UPDATED",
+    severity: eliminationChange > 0 ? "highlight" : "info",
+    team,
+    roundNumber: team.currentRound,
+    title: toggleTemplate.title,
+    message: toggleTemplate.message,
+    changes: [
+      {
+        field: "round.eliminationCount",
+        previous: oldEliminationCount,
+        current: currentRound.eliminationCount,
+        delta: eliminationChange,
+      },
+      { field: "round.status", previous: oldStatus, current: currentRound.status },
+      {
+        field: "round.eliminatedPlayers",
+        previous: null,
+        current: currentRound.eliminatedPlayers,
+      },
+    ],
+    meta: {
+      playerIndex,
+      changeType: eliminationChange > 0 ? "eliminated" : "revived",
+    },
+  });
+
+  if (currentRound.eliminationCount === 4) {
+    const eliminatedTemplate = logTemplates.teamEliminated({
+      team,
+      roundNumber: team.currentRound,
+      eliminationCount: currentRound.eliminationCount,
+    });
+
+    await safeCreateTeamLog({
+      req,
+      eventType: "TEAM_ELIMINATED",
+      severity: "critical",
+      team,
+      roundNumber: team.currentRound,
+      title: eliminatedTemplate.title,
+      message: eliminatedTemplate.message,
+      changes: [
+        {
+          field: "team.isEliminated",
+          previous: oldTeamEliminated,
+          current: true,
+        },
+        { field: "round.status", previous: oldStatus, current: "eliminated" },
+      ],
+    });
+  }
 
   return res
     .status(200)
@@ -432,17 +666,37 @@ const deleteTeam = asyncHandler(async (req, res) => {
   if (!team) {
     throw new ApiError(404, "Team not found");
   }
+
+  const template = logTemplates.teamDeleted({ team });
+  await safeCreateTeamLog({
+    req,
+    eventType: "TEAM_DELETED",
+    severity: "critical",
+    team,
+    roundNumber: team.currentRound || null,
+    title: template.title,
+    message: template.message,
+    changes: [
+      { field: "team.deleted", previous: false, current: true },
+      {
+        field: "team.totalPoints",
+        previous: team.totalPoints,
+        current: team.totalPoints,
+        delta: 0,
+      },
+    ],
+  });
+
   req.app.io.emit("team_deleted", teamId);
   return res
     .status(200)
     .json(new ApiResponse(200, null, "Team deleted successfully"));
 });
 
-// Update Round Positions (New Method)
+// Update Round Positions
 const updateRoundPositions = asyncHandler(async (req, res) => {
   const { roundNumber, slotPositions } = req.body;
 
-  // Validate input
   if (!Array.isArray(slotPositions)) {
     throw new ApiError(400, "Slot positions must be an array");
   }
@@ -461,19 +715,58 @@ const updateRoundPositions = asyncHandler(async (req, res) => {
         );
       }
 
-      // Calculate position points difference
+      const oldPosition = round.position;
       const oldPoints = round.positionPoints;
+      const oldTotalPoints = team.totalPoints;
+
       const newPoints = POSITION_POINTS[position] || 0;
       const pointsDifference = newPoints - oldPoints;
 
-      // Update round details
       round.position = position;
       round.positionPoints = newPoints;
 
-      // Update total points
       team.totalPoints += pointsDifference;
 
       await team.save();
+
+      const template = logTemplates.positionUpdated({
+        team,
+        roundNumber,
+        previousPosition: oldPosition,
+        currentPosition: position,
+        pointsDelta: pointsDifference,
+      });
+
+      await safeCreateTeamLog({
+        req,
+        eventType: "POSITION_UPDATED",
+        severity: pointsDifference > 0 ? "highlight" : "info",
+        team,
+        roundNumber,
+        title: template.title,
+        message: template.message,
+        changes: [
+          {
+            field: "round.position",
+            previous: oldPosition,
+            current: position,
+            delta: oldPosition && position ? position - oldPosition : null,
+          },
+          {
+            field: "round.positionPoints",
+            previous: oldPoints,
+            current: newPoints,
+            delta: pointsDifference,
+          },
+          {
+            field: "team.totalPoints",
+            previous: oldTotalPoints,
+            current: team.totalPoints,
+            delta: team.totalPoints - oldTotalPoints,
+          },
+        ],
+      });
+
       return team;
     })
   );
@@ -483,6 +776,7 @@ const updateRoundPositions = asyncHandler(async (req, res) => {
     roundNumber,
     slotPositions,
   });
+
   return res
     .status(200)
     .json(new ApiResponse(200, validUpdates, "Positions updated successfully"));
