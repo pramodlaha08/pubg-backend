@@ -45,7 +45,7 @@ const recalculateEliminationOrder = async (roundNumber) => {
   // Assign order numbers: 1st eliminated gets highest number
   const bulkOps = eliminated.map((doc, index) => {
     const eliminationOrder = Math.max(1, baseline - index);
-    
+
     if (debugMode) {
       console.log(
         `[ELIMINATION_ORDER] Team "${doc.teamName}": position ${index + 1}/${totalEliminated} = #${eliminationOrder}`
@@ -73,7 +73,11 @@ const recalculateEliminationOrder = async (roundNumber) => {
   if (debugMode) {
     console.log(
       `[ELIMINATION_ORDER] Final snapshot:`,
-      snapshot.map((s) => ({ team: s.teamName, order: s.eliminationOrder, status: s.status }))
+      snapshot.map((s) => ({
+        team: s.teamName,
+        order: s.eliminationOrder,
+        status: s.status,
+      }))
     );
   }
 
@@ -186,7 +190,9 @@ export const syncEliminationRealtime = async ({ req, team, round }) => {
 
   // Always emit notification with recalculated order when available.
   if (action !== "alive" && notification?._id) {
-    const recalculated = await EliminationNotification.findById(notification._id).lean();
+    const recalculated = await EliminationNotification.findById(
+      notification._id
+    ).lean();
     if (recalculated) {
       notification = recalculated;
     }
@@ -200,12 +206,17 @@ export const syncEliminationRealtime = async ({ req, team, round }) => {
   };
 
   if (debugMode) {
-    console.log(`  Broadcasting elimination_state_changed with action: ${action}`);
+    console.log(
+      `  Broadcasting elimination_state_changed with action: ${action}`
+    );
   }
 
   const io = req.app.io;
   io.emit("elimination_state_changed", payload);
-  io.to(`round_${round.roundNumber}`).emit("elimination_state_changed", payload);
+  io.to(`round_${round.roundNumber}`).emit(
+    "elimination_state_changed",
+    payload
+  );
 
   io.emit("elimination_order_snapshot", {
     roundNumber: round.roundNumber,
