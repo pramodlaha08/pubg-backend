@@ -1,46 +1,49 @@
-import { EliminationNotification } from '../models/eliminationNotification.model.js';
-import { Team } from '../models/team.model.js';
-import { asyncHandler } from '../utils/asyncHandler.js';
-import { ApiError } from '../utils/ApiError.js';
-import { ApiResponse } from '../utils/ApiResponse.js';
-import SQUAD_CONFIG from '../config/squadSize.js';
+import { EliminationNotification } from "../models/eliminationNotification.model.js";
+import { Team } from "../models/team.model.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { ApiError } from "../utils/ApiError.js";
+import { ApiResponse } from "../utils/ApiResponse.js";
+import SQUAD_CONFIG from "../config/squadSize.js";
 
 // Track or create elimination
 export const trackElimination = asyncHandler(async (req, res) => {
   const { teamId, roundNumber } = req.body;
 
   if (!teamId || !roundNumber) {
-    throw new ApiError(400, 'teamId and roundNumber are required');
+    throw new ApiError(400, "teamId and roundNumber are required");
   }
 
   const team = await Team.findById(teamId);
   if (!team) {
-    throw new ApiError(404, 'Team not found');
+    throw new ApiError(404, "Team not found");
   }
 
-  const round = team.rounds.find(r => r.roundNumber === roundNumber);
+  const round = team.rounds.find((r) => r.roundNumber === roundNumber);
   if (!round) {
-    throw new ApiError(404, 'Round not found');
+    throw new ApiError(404, "Round not found");
   }
 
-  const isEliminated = round.eliminationCount >= SQUAD_CONFIG.fullEliminationCount;
+  const isEliminated =
+    round.eliminationCount >= SQUAD_CONFIG.fullEliminationCount;
 
   const notification = await EliminationNotification.findOneAndUpdate(
     { teamId, roundNumber },
     {
       teamId,
       teamName: team.name,
+      teamLogo: team.logo || "",
       roundNumber,
-      status: isEliminated ? 'eliminated' : 'alive',
+      status: isEliminated ? "eliminated" : "alive",
+      eliminatedAt: isEliminated ? new Date() : null,
       killCount: round.kills || 0,
       position: round.position || 0,
     },
     { upsert: true, new: true }
   );
 
-  return res.status(200).json(
-    new ApiResponse(200, notification, 'Elimination tracked')
-  );
+  return res
+    .status(200)
+    .json(new ApiResponse(200, notification, "Elimination tracked"));
 });
 
 // Check display status
@@ -53,14 +56,26 @@ export const checkDisplayStatus = asyncHandler(async (req, res) => {
   });
 
   if (!notification) {
-    return res.status(200).json(
-      new ApiResponse(200, { displayed: false, tracked: false }, 'Not tracked yet')
-    );
+    return res
+      .status(200)
+      .json(
+        new ApiResponse(
+          200,
+          { displayed: false, tracked: false },
+          "Not tracked yet"
+        )
+      );
   }
 
-  return res.status(200).json(
-    new ApiResponse(200, { displayed: notification.displayed, tracked: true, tracking: notification }, 'Status checked')
-  );
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        { displayed: false, tracked: true, tracking: notification },
+        "Status checked"
+      )
+    );
 });
 
 // Mark as displayed (updated for frontend compatibility)
@@ -68,22 +83,21 @@ export const markAsDisplayed2 = asyncHandler(async (req, res) => {
   const { teamId, roundNumber } = req.body;
 
   if (!teamId || !roundNumber) {
-    throw new ApiError(400, 'teamId and roundNumber are required');
+    throw new ApiError(400, "teamId and roundNumber are required");
   }
 
-  const notification = await EliminationNotification.findOneAndUpdate(
-    { teamId, roundNumber },
-    { displayed: true },
-    { new: true }
-  );
+  const notification = await EliminationNotification.findOne({
+    teamId,
+    roundNumber,
+  });
 
   if (!notification) {
-    throw new ApiError(404, 'Notification not found');
+    throw new ApiError(404, "Notification not found");
   }
 
-  return res.status(200).json(
-    new ApiResponse(200, notification, 'Marked as displayed')
-  );
+  return res
+    .status(200)
+    .json(new ApiResponse(200, notification, "Display ack received"));
 });
 
 // Sync eliminations from Team data
@@ -94,8 +108,9 @@ export const syncEliminations = asyncHandler(async (req, res) => {
 
   for (const team of teams) {
     for (const round of team.rounds) {
-      const isEliminated = round.eliminationCount >= SQUAD_CONFIG.fullEliminationCount;
-      const status = isEliminated ? 'eliminated' : 'alive';
+      const isEliminated =
+        round.eliminationCount >= SQUAD_CONFIG.fullEliminationCount;
+      const status = isEliminated ? "eliminated" : "alive";
 
       let notification = await EliminationNotification.findOne({
         teamId: team._id,
@@ -106,15 +121,22 @@ export const syncEliminations = asyncHandler(async (req, res) => {
         notification = await EliminationNotification.create({
           teamId: team._id,
           teamName: team.name,
+          teamLogo: team.logo || "",
           roundNumber: round.roundNumber,
           status: status,
           displayed: false,
+          eliminatedAt: status === "eliminated" ? new Date() : null,
           killCount: round.kills || 0,
           position: round.position || 0,
         });
         synced++;
       } else if (notification.status !== status) {
         notification.status = status;
+        notification.teamLogo = team.logo || "";
+        notification.eliminatedAt = status === "eliminated" ? new Date() : null;
+        if (status === "alive") {
+          notification.eliminationOrder = 0;
+        }
         notification.killCount = round.kills || 0;
         notification.position = round.position || 0;
         await notification.save();
@@ -124,20 +146,20 @@ export const syncEliminations = asyncHandler(async (req, res) => {
   }
 
   const eliminated = await EliminationNotification.find({
-    status: 'eliminated',
-    eliminationOrder: 0
+    status: "eliminated",
+    eliminationOrder: 0,
   }).sort({ createdAt: 1 });
 
-  let order = await EliminationNotification.countDocuments({ status: 'alive' });
+  let order = await EliminationNotification.countDocuments({ status: "alive" });
   for (const notif of eliminated) {
     notif.eliminationOrder = order;
     await notif.save();
     order--;
   }
 
-  return res.status(200).json(
-    new ApiResponse(200, { synced }, 'Eliminations synced successfully')
-  );
+  return res
+    .status(200)
+    .json(new ApiResponse(200, { synced }, "Eliminations synced successfully"));
 });
 
 // Get pending notifications (eliminated but not displayed)
@@ -145,8 +167,7 @@ export const getPendingNotifications = asyncHandler(async (req, res) => {
   const { roundNumber } = req.query;
 
   const query = {
-    status: 'eliminated',
-    displayed: false,
+    status: "eliminated",
   };
 
   if (roundNumber) {
@@ -155,11 +176,13 @@ export const getPendingNotifications = asyncHandler(async (req, res) => {
 
   const notifications = await EliminationNotification.find(query)
     .sort({ createdAt: 1 })
-    .populate('teamId', 'logo');
+    .populate("teamId", "logo");
 
-  return res.status(200).json(
-    new ApiResponse(200, notifications, 'Pending notifications retrieved')
-  );
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(200, notifications, "Pending notifications retrieved")
+    );
 });
 
 // Mark notification as displayed (original version)
@@ -169,15 +192,12 @@ export const markAsDisplayed = asyncHandler(async (req, res) => {
   const notification = await EliminationNotification.findById(notificationId);
 
   if (!notification) {
-    throw new ApiError(404, 'Notification not found');
+    throw new ApiError(404, "Notification not found");
   }
 
-  notification.displayed = true;
-  await notification.save();
-
-  return res.status(200).json(
-    new ApiResponse(200, notification, 'Notification marked as displayed')
-  );
+  return res
+    .status(200)
+    .json(new ApiResponse(200, notification, "Display ack received"));
 });
 
 // Reset all notifications for a round
@@ -186,34 +206,39 @@ export const resetRound = asyncHandler(async (req, res) => {
 
   await EliminationNotification.updateMany(
     { roundNumber: parseInt(roundNumber) },
-    { displayed: false, status: 'alive', eliminationOrder: 0 }
+    {
+      displayed: false,
+      status: "alive",
+      eliminationOrder: 0,
+      eliminatedAt: null,
+    }
   );
 
-  return res.status(200).json(
-    new ApiResponse(200, {}, 'Round notifications reset')
-  );
+  return res
+    .status(200)
+    .json(new ApiResponse(200, {}, "Round notifications reset"));
 });
 
 // Get all notifications for admin view
 export const getAllNotifications = asyncHandler(async (req, res) => {
   const { roundNumber } = req.query;
-  
+
   const query = roundNumber ? { roundNumber: parseInt(roundNumber) } : {};
 
   const notifications = await EliminationNotification.find(query)
     .sort({ roundNumber: 1, createdAt: 1 })
-    .populate('teamId', 'logo');
+    .populate("teamId", "logo");
 
-  return res.status(200).json(
-    new ApiResponse(200, notifications, 'Notifications retrieved')
-  );
+  return res
+    .status(200)
+    .json(new ApiResponse(200, notifications, "Notifications retrieved"));
 });
 
 // Reset all tracking
 export const resetAllTracking = asyncHandler(async (req, res) => {
   await EliminationNotification.deleteMany({});
 
-  return res.status(200).json(
-    new ApiResponse(200, {}, 'All elimination tracking reset')
-  );
+  return res
+    .status(200)
+    .json(new ApiResponse(200, {}, "All elimination tracking reset"));
 });

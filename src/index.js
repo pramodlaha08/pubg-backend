@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { TeamLog } from "./models/teamLog.model.js";
+import { getEliminationSnapshot } from "./utils/eliminationRealtime.helper.js";
 
 dotenv.config({ path: "./.env" });
 
@@ -71,6 +72,32 @@ io.on("connection", (socket) => {
       );
       socket.emit("commentary_feed_error", {
         message: "Unable to fetch live commentary feed",
+      });
+    }
+  });
+
+  socket.on("subscribe_elimination_feed", async (payload = {}) => {
+    try {
+      const requestedRound = Number(payload.roundNumber);
+      const roundNumber = Number.isFinite(requestedRound)
+        ? requestedRound
+        : null;
+
+      if (roundNumber) {
+        socket.join(`round_${roundNumber}`);
+      }
+
+      const items = await getEliminationSnapshot(roundNumber);
+      socket.emit("elimination_order_snapshot", {
+        roundNumber: roundNumber || null,
+        items,
+      });
+    } catch (error) {
+      console.error(
+        `[Socket] Error in subscribe_elimination_feed: ${error.message}`
+      );
+      socket.emit("elimination_feed_error", {
+        message: "Unable to fetch elimination feed",
       });
     }
   });

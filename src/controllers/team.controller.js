@@ -5,6 +5,10 @@ import { ApiResponse } from "../utils/ApiResponse.js";
 import { uploadOnCloudinary } from "../utils/cloudinary.js";
 import { ApiError } from "../utils/ApiError.js";
 import { createTeamLogEntry, logTemplates } from "../utils/teamLog.helper.js";
+import {
+  syncEliminationRealtime,
+  flushEliminationRecords,
+} from "../utils/eliminationRealtime.helper.js";
 import SQUAD_CONFIG from "../config/squadSize.js";
 import mongoose from "mongoose";
 
@@ -97,6 +101,14 @@ const createRound = asyncHandler(async (req, res) => {
   const teams = await Team.find({ slot: { $in: slots } });
   if (teams.length === 0) {
     throw new ApiError(404, "No teams found for provided slots");
+  }
+
+  // Flush old elimination records for this round to start fresh
+  const flushedCount = await flushEliminationRecords(roundNumber);
+  if (process.env.DEBUG_MODE === "true") {
+    console.log(
+      `[CREATE_ROUND] Flushed ${flushedCount} elimination records for round ${roundNumber}`
+    );
   }
 
   await Promise.all(
@@ -224,7 +236,8 @@ const deleteRoundFromTeams = asyncHandler(async (req, res) => {
         const currentRound = team.rounds.find(
           (r) => r.roundNumber === team.currentRound
         );
-        team.isEliminated = currentRound?.eliminationCount >= SQUAD_CONFIG.fullEliminationCount;
+        team.isEliminated =
+          currentRound?.eliminationCount >= SQUAD_CONFIG.fullEliminationCount;
 
         await team.save();
 
@@ -530,8 +543,14 @@ const handleElimination = asyncHandler(async (req, res) => {
   const { teamId } = req.params;
   const { playerIndex } = req.body;
 
-  if (playerIndex === undefined || !SQUAD_CONFIG.isValidPlayerIndex(playerIndex)) {
-    throw new ApiError(400, `Invalid player index (0-${SQUAD_CONFIG.maxPlayerIndex} required)`);
+  if (
+    playerIndex === undefined ||
+    !SQUAD_CONFIG.isValidPlayerIndex(playerIndex)
+  ) {
+    throw new ApiError(
+      400,
+      `Invalid player index (0-${SQUAD_CONFIG.maxPlayerIndex} required)`
+    );
   }
 
   const team = await Team.findById(teamId);
@@ -567,12 +586,20 @@ const handleElimination = asyncHandler(async (req, res) => {
   );
 
   currentRound.status =
-    currentRound.eliminationCount === SQUAD_CONFIG.fullEliminationCount ? "eliminated" : "alive";
+    currentRound.eliminationCount === SQUAD_CONFIG.fullEliminationCount
+      ? "eliminated"
+      : "alive";
 
   const oldTeamEliminated = team.isEliminated;
-  team.isEliminated = currentRound.eliminationCount === SQUAD_CONFIG.fullEliminationCount;
+  team.isEliminated =
+    currentRound.eliminationCount === SQUAD_CONFIG.fullEliminationCount;
 
   await team.save();
+  void syncEliminationRealtime({ req, team, round: currentRound }).catch(
+    (error) => {
+      console.error("Failed to sync elimination realtime:", error.message);
+    }
+  );
 
   const toggleTemplate = logTemplates.eliminationUpdated({
     team,
