@@ -14,14 +14,17 @@ import mongoose from "mongoose";
 
 // Position points mapping
 const POSITION_POINTS = {
-  1: 10,
-  2: 8,
-  3: 6,
-  4: 5,
-  5: 4,
-  6: 3,
+  1: 15,
+  2: 12,
+  3: 10,
+  4: 8,
+  5: 6,
+  6: 4,
   7: 2,
   8: 1,
+  9: 0,
+  10: 0,
+  11: 0,
 };
 const KILL_POINT_MULTIPLIER = 1;
 
