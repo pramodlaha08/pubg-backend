@@ -5,6 +5,7 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import { TeamLog } from "./models/teamLog.model.js";
 import { getEliminationSnapshot } from "./utils/eliminationRealtime.helper.js";
+import { seedAdmin, ensureSettings } from "./utils/seedAdmin.js";
 
 dotenv.config({ path: "./.env" });
 
@@ -105,7 +106,10 @@ io.on("connection", (socket) => {
 
 // Database connection and server start
 connectDB()
-  .then(() => {
+  .then(async () => {
+    await seedAdmin();
+    await ensureSettings();
+
     server.listen(port, "0.0.0.0", () => {
       console.log(`Server listening on ${port}`);
     });
