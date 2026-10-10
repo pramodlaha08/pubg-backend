@@ -10,10 +10,11 @@ import {
   getAllNotifications,
   resetAllTracking,
 } from '../controllers/eliminationNotification.controller.js';
+import { requireAdmin } from '../middlewares/requireAdmin.middleware.js';
 
 const router = Router();
 
-// Frontend API endpoints
+// Frontend API endpoints (public viewer sync)
 router.post('/track', trackElimination);
 router.post('/display', markAsDisplayed2);
 router.get('/check/:teamId/:roundNumber', checkDisplayStatus);
@@ -23,7 +24,7 @@ router.post('/sync', syncEliminations);
 router.get('/pending', getPendingNotifications);
 router.get('/all', getAllNotifications);
 router.patch('/:notificationId/displayed', markAsDisplayed);
-router.patch('/round/:roundNumber/reset', resetRound);
-router.delete('/reset', resetAllTracking);
+router.patch('/round/:roundNumber/reset', requireAdmin, resetRound);
+router.delete('/reset', requireAdmin, resetAllTracking);
 
 export default router;
