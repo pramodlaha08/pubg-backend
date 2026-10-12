@@ -16,7 +16,7 @@ const getTeamLogs = asyncHandler(async (req, res) => {
   const pageNumber = Math.max(1, Number(page) || 1);
   const limitNumber = Math.min(200, Math.max(1, Number(limit) || 50));
 
-  const query = {};
+  const query = { tournamentId: req.tournamentId };
   if (roundNumber !== undefined) query.roundNumber = Number(roundNumber);
   if (teamId) query.teamId = teamId;
   if (eventType) query.eventType = eventType;
@@ -49,7 +49,7 @@ const getTeamLogs = asyncHandler(async (req, res) => {
 
 const getLatestLogFeed = asyncHandler(async (req, res) => {
   const { roundNumber, limit = 30 } = req.query;
-  const query = {};
+  const query = { tournamentId: req.tournamentId };
 
   if (roundNumber !== undefined) {
     query.roundNumber = Number(roundNumber);
@@ -66,10 +66,10 @@ const getLatestLogFeed = asyncHandler(async (req, res) => {
     );
 });
 
-const getCommentarySnapshot = asyncHandler(async (_req, res) => {
+const getCommentarySnapshot = asyncHandler(async (req, res) => {
   const SNAPSHOT_LIMIT = 100;
 
-  const items = await TeamLog.find({})
+  const items = await TeamLog.find({ tournamentId: req.tournamentId })
     .sort({ createdAt: -1, _id: -1 })
     .limit(SNAPSHOT_LIMIT);
 
@@ -88,7 +88,7 @@ const getCommentarySnapshot = asyncHandler(async (_req, res) => {
 const resetTeamLogs = asyncHandler(async (req, res) => {
   const { roundNumber } = req.query;
 
-  const query = {};
+  const query = { tournamentId: req.tournamentId };
   if (roundNumber !== undefined) {
     query.roundNumber = Number(roundNumber);
   }

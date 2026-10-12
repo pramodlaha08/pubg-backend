@@ -1,11 +1,12 @@
 import { EliminationNotification } from "../models/eliminationNotification.model.js";
 import { Team } from "../models/team.model.js";
-import SQUAD_CONFIG from "../config/squadSize.js";
+import { getScoringConfig } from "./scoring.helper.js";
 
 const debugMode = process.env.DEBUG_MODE === "true";
 
 const buildSocketPayload = (doc) => ({
   id: String(doc._id),
+  tournamentId: doc.tournamentId ? String(doc.tournamentId) : undefined,
   teamId: String(doc.teamId),
   teamName: doc.teamName,
   teamLogo: doc.teamLogo || "",
@@ -22,13 +23,15 @@ const buildSocketPayload = (doc) => ({
  * Backward numbering is based on total participating teams in that round.
  * Example for 3 teams: first eliminated #3, second #2, third #1.
  */
-const recalculateEliminationOrder = async (roundNumber) => {
+const recalculateEliminationOrder = async (roundNumber, tournamentId) => {
   const totalTeamsInRound = await Team.countDocuments({
+    tournamentId,
     rounds: { $elemMatch: { roundNumber } },
   });
 
   // Find ONLY teams that are eliminated in this round, sorted by time
   const eliminated = await EliminationNotification.find({
+    tournamentId,
     roundNumber,
     status: "eliminated",
   }).sort({ eliminatedAt: 1, createdAt: 1, _id: 1 });
@@ -66,7 +69,7 @@ const recalculateEliminationOrder = async (roundNumber) => {
   }
 
   // Return snapshot sorted by elimination order (highest first)
-  const snapshot = await EliminationNotification.find({ roundNumber })
+  const snapshot = await EliminationNotification.find({ tournamentId, roundNumber })
     .sort({ eliminationOrder: -1 })
     .lean();
 
@@ -91,11 +94,15 @@ const recalculateEliminationOrder = async (roundNumber) => {
 export const syncEliminationRealtime = async ({ req, team, round }) => {
   if (!req?.app?.io || !team || !round) return null;
 
+  const tournamentId = req?.tournamentId || team.tournamentId;
+  if (!tournamentId) return null;
+
   const isEliminated =
-    round.eliminationCount >= SQUAD_CONFIG.fullEliminationCount;
+    round.eliminationCount >= getScoringConfig(req.tournament).fullEliminationCount;
   const nextStatus = isEliminated ? "eliminated" : "alive";
 
   const existing = await EliminationNotification.findOne({
+    tournamentId,
     teamId: team._id,
     roundNumber: round.roundNumber,
   });
@@ -119,9 +126,10 @@ export const syncEliminationRealtime = async ({ req, team, round }) => {
       // Team just got fully eliminated: CREATE record with timestamp
       action = "eliminated";
       notification = await EliminationNotification.findOneAndUpdate(
-        { teamId: team._id, roundNumber: round.roundNumber },
+        { tournamentId, teamId: team._id, roundNumber: round.roundNumber },
         {
           $set: {
+            tournamentId,
             teamId: team._id,
             teamName: team.name,
             teamLogo: team.logo || "",
@@ -143,6 +151,7 @@ export const syncEliminationRealtime = async ({ req, team, round }) => {
       // Team was revived: DELETE the elimination record (toggle system)
       action = "alive";
       await EliminationNotification.deleteOne({
+        tournamentId,
         teamId: team._id,
         roundNumber: round.roundNumber,
       });
@@ -150,6 +159,7 @@ export const syncEliminationRealtime = async ({ req, team, round }) => {
       // Keep a synthetic alive payload so clients can remove queue items safely.
       notification = {
         _id: `${team._id}-${round.roundNumber}-alive`,
+        tournamentId,
         teamId: team._id,
         teamName: team.name,
         teamLogo: team.logo || "",
@@ -169,7 +179,7 @@ export const syncEliminationRealtime = async ({ req, team, round }) => {
     // No status change, just update stats
     action = "updated";
     notification = await EliminationNotification.findOneAndUpdate(
-      { teamId: team._id, roundNumber: round.roundNumber },
+      { tournamentId, teamId: team._id, roundNumber: round.roundNumber },
       {
         $set: {
           killCount: round.kills || 0,
@@ -186,7 +196,10 @@ export const syncEliminationRealtime = async ({ req, team, round }) => {
 
   // Recalculate elimination order for all eliminated teams in this round
   // This ensures correct backward numbering based on actual eliminations
-  const roundSnapshot = await recalculateEliminationOrder(round.roundNumber);
+  const roundSnapshot = await recalculateEliminationOrder(
+    round.roundNumber,
+    tournamentId
+  );
 
   // Always emit notification with recalculated order when available.
   if (action !== "alive" && notification?._id) {
@@ -212,20 +225,25 @@ export const syncEliminationRealtime = async ({ req, team, round }) => {
   }
 
   const io = req.app.io;
+  const room = `t_${tournamentId}`;
+  io.to(room).emit("elimination_state_changed", payload);
   io.emit("elimination_state_changed", payload);
   io.to(`round_${round.roundNumber}`).emit(
     "elimination_state_changed",
     payload
   );
 
-  io.emit("elimination_order_snapshot", {
+  const snapshotPayload = {
+    tournamentId: String(tournamentId),
     roundNumber: round.roundNumber,
     items: roundSnapshot,
-  });
-  io.to(`round_${round.roundNumber}`).emit("elimination_order_snapshot", {
-    roundNumber: round.roundNumber,
-    items: roundSnapshot,
-  });
+  };
+  io.to(room).emit("elimination_order_snapshot", snapshotPayload);
+  io.emit("elimination_order_snapshot", snapshotPayload);
+  io.to(`round_${round.roundNumber}`).emit(
+    "elimination_order_snapshot",
+    snapshotPayload
+  );
 
   return payload;
 };
@@ -234,11 +252,11 @@ export const syncEliminationRealtime = async ({ req, team, round }) => {
  * Flush elimination records for a specific round
  * Called when a new round is created to clear out old elimination data
  */
-export const flushEliminationRecords = async (roundNumber) => {
+export const flushEliminationRecords = async (roundNumber, tournamentId) => {
   try {
-    const result = await EliminationNotification.deleteMany({
-      roundNumber,
-    });
+    const query = { roundNumber };
+    if (tournamentId) query.tournamentId = tournamentId;
+    const result = await EliminationNotification.deleteMany(query);
 
     if (debugMode) {
       console.log(
@@ -256,8 +274,9 @@ export const flushEliminationRecords = async (roundNumber) => {
   }
 };
 
-export const getEliminationSnapshot = async (roundNumber = null) => {
+export const getEliminationSnapshot = async (roundNumber = null, tournamentId = null) => {
   const query = {};
+  if (tournamentId) query.tournamentId = tournamentId;
   if (Number.isFinite(Number(roundNumber))) {
     query.roundNumber = Number(roundNumber);
   }

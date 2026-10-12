@@ -2,6 +2,12 @@ import mongoose from "mongoose";
 
 const eliminationNotificationSchema = new mongoose.Schema(
   {
+    tournamentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Tournament",
+      required: true,
+      index: true,
+    },
     teamId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Team",
@@ -20,9 +26,9 @@ const eliminationNotificationSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Compound index to ensure one record per team per round
+// Compound index to ensure one record per team per round within a tournament
 eliminationNotificationSchema.index(
-  { teamId: 1, roundNumber: 1 },
+  { tournamentId: 1, teamId: 1, roundNumber: 1 },
   { unique: true }
 );
 

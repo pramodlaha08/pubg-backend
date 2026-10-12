@@ -15,12 +15,22 @@ const pointsTableColorsSchema = new mongoose.Schema(
     aliveBar: { type: String, default: "#0000FF" },
     deadBar: { type: String, default: "#EF4444" },
     textPrimary: { type: String, default: "#0F172A" },
+    panelFrom: { type: String, default: "#F5F8FF" },
+    panelTo: { type: String, default: "#EAF2FF" },
+    placeColor: { type: String, default: "#2563EB" },
+    elimColor: { type: String, default: "#D97706" },
+    totalColor: { type: String, default: "#0F172A" },
+    danger: { type: String, default: "#DC2626" },
+    warning: { type: String, default: "#F59E0B" },
+    notificationFrom: { type: String, default: "#FFFFFF" },
+    notificationTo: { type: String, default: "#EFF6FF" },
   },
   { _id: false }
 );
 
 const pointsTableColumnsSchema = new mongoose.Schema(
   {
+    logo: { type: Boolean, default: true },
     alive: { type: Boolean, default: true },
     pts: { type: Boolean, default: true },
     elims: { type: Boolean, default: true },
@@ -46,13 +56,49 @@ const pointsTableLayoutSchema = new mongoose.Schema(
   { _id: false }
 );
 
-const pointsTableSchema = new mongoose.Schema(
+const notificationSettingsSchema = new mongoose.Schema(
+  {
+    showLogo: { type: Boolean, default: true },
+    showKills: { type: Boolean, default: true },
+    showRank: { type: Boolean, default: true },
+    showRound: { type: Boolean, default: true },
+    durationMs: { type: Number, default: 5000, min: 1000, max: 15000 },
+  },
+  { _id: false }
+);
+
+const leaderboardSettingsSchema = new mongoose.Schema(
+  {
+    showLogo: { type: Boolean, default: true },
+    showPlace: { type: Boolean, default: true },
+    showElims: { type: Boolean, default: true },
+    showTotal: { type: Boolean, default: true },
+    showChickens: { type: Boolean, default: true },
+  },
+  { _id: false }
+);
+
+const matchSettingsSchema = new mongoose.Schema(
+  {
+    showLogo: { type: Boolean, default: true },
+    showRank: { type: Boolean, default: true },
+    showElims: { type: Boolean, default: true },
+    showPlace: { type: Boolean, default: true },
+    showTotal: { type: Boolean, default: true },
+  },
+  { _id: false }
+);
+
+export const pointsTableSchema = new mongoose.Schema(
   {
     preset: { type: String, default: "esports-blue" },
     colors: { type: pointsTableColorsSchema, default: () => ({}) },
     columns: { type: pointsTableColumnsSchema, default: () => ({}) },
     header: { type: pointsTableHeaderSchema, default: () => ({}) },
     layout: { type: pointsTableLayoutSchema, default: () => ({}) },
+    notifications: { type: notificationSettingsSchema, default: () => ({}) },
+    leaderboard: { type: leaderboardSettingsSchema, default: () => ({}) },
+    match: { type: matchSettingsSchema, default: () => ({}) },
   },
   { _id: false }
 );
@@ -60,6 +106,13 @@ const pointsTableSchema = new mongoose.Schema(
 const settingsSchema = new mongoose.Schema(
   {
     key: { type: String, required: true, unique: true, default: "app" },
+    defaultTournamentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Tournament",
+      default: null,
+    },
+    // Legacy single-tournament design blob. Kept as a backup only; the
+    // authoritative design now lives on each Tournament document.
     pointsTable: {
       type: pointsTableSchema,
       default: () => ({}),

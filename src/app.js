@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 
@@ -30,13 +31,22 @@ import eliminationNotificationRoutes from "./routes/eliminationNotification.rout
 import teamLogRoutes from "./routes/teamLog.route.js";
 import authRoutes from "./routes/auth.route.js";
 import settingsRoutes from "./routes/settings.route.js";
+import dashboardRoutes from "./routes/dashboard.route.js";
+import tournamentRoutes from "./routes/tournament.route.js";
+import { resolveTournament } from "./middlewares/resolveTournament.middleware.js";
 
 app.use("/api/v1/auth", authRoutes);
-app.use("/api/v1/settings", settingsRoutes);
-app.use("/api/v1/team", teamRoutes);
-app.use("/api/v1/elimination", eliminationNotificationRoutes);
-app.use("/api/v1/elimination-notification", eliminationNotificationRoutes);
-app.use("/api/v1/team-log", teamLogRoutes);
+app.use("/api/v1/tournaments", tournamentRoutes);
+app.use("/api/v1/settings", resolveTournament, settingsRoutes);
+app.use("/api/v1/dashboard", resolveTournament, dashboardRoutes);
+app.use("/api/v1/team", resolveTournament, teamRoutes);
+app.use("/api/v1/elimination", resolveTournament, eliminationNotificationRoutes);
+app.use(
+  "/api/v1/elimination-notification",
+  resolveTournament,
+  eliminationNotificationRoutes
+);
+app.use("/api/v1/team-log", resolveTournament, teamLogRoutes);
 
 app.use((err, req, res, next) => {
   const statusCode = err.statusCode || 500;

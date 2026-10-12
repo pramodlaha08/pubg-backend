@@ -2,6 +2,12 @@ import mongoose from "mongoose";
 
 const teamLogSchema = new mongoose.Schema(
   {
+    tournamentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Tournament",
+      required: true,
+      index: true,
+    },
     eventType: {
       type: String,
       required: true,
@@ -16,6 +22,7 @@ const teamLogSchema = new mongoose.Schema(
         "ELIMINATION_UPDATED",
         "TEAM_ELIMINATED",
         "TEAM_DELETED",
+        "TEAM_UPDATED",
       ],
     },
     severity: {
@@ -81,6 +88,7 @@ const teamLogSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+teamLogSchema.index({ tournamentId: 1, createdAt: -1 });
 teamLogSchema.index({ createdAt: -1 });
 teamLogSchema.index({ roundNumber: 1, createdAt: -1 });
 teamLogSchema.index({ teamId: 1, createdAt: -1 });
