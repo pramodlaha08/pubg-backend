@@ -1,13 +1,11 @@
+import "dotenv/config";
 import { app } from "./app.js";
 import connectDB from "./db/index.js";
-import dotenv from "dotenv";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { TeamLog } from "./models/teamLog.model.js";
 import { getEliminationSnapshot } from "./utils/eliminationRealtime.helper.js";
-import { seedAdmin, ensureSettings } from "./utils/seedAdmin.js";
-
-dotenv.config({ path: "./.env" });
+import { seedAdmin, ensureSettings, ensureDefaultTournament } from "./utils/seedAdmin.js";
 
 const port = process.env.PORT || 8000;
 
@@ -46,6 +44,15 @@ io.on("connection", (socket) => {
     socket.join(`round_${roundNumber}`);
   });
 
+  // Join a tournament room so concurrent broadcasts stay isolated.
+  socket.on("join_tournament", (tournamentId) => {
+    if (!tournamentId) return;
+    console.log(
+      `[Socket] Client ${socket.id} joining tournament room: t_${tournamentId}`
+    );
+    socket.join(`t_${tournamentId}`);
+  });
+
   // Dedicated commentator feed: fetch initial logs once, then keep listening to team_log_created.
   socket.on("subscribe_commentary_feed", async (payload = {}) => {
     try {
@@ -56,7 +63,13 @@ io.on("connection", (socket) => {
         Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : 100)
       );
 
-      const latestLogs = await TeamLog.find({})
+      const tournamentId = payload.tournamentId || null;
+      if (tournamentId) socket.join(`t_${tournamentId}`);
+
+      const query = {};
+      if (tournamentId) query.tournamentId = tournamentId;
+
+      const latestLogs = await TeamLog.find(query)
         .sort({ createdAt: -1, _id: -1 })
         .limit(limit);
 
@@ -88,9 +101,13 @@ io.on("connection", (socket) => {
         socket.join(`round_${roundNumber}`);
       }
 
-      const items = await getEliminationSnapshot(roundNumber);
+      const tournamentId = payload.tournamentId || null;
+      if (tournamentId) socket.join(`t_${tournamentId}`);
+
+      const items = await getEliminationSnapshot(roundNumber, tournamentId);
       socket.emit("elimination_order_snapshot", {
         roundNumber: roundNumber || null,
+        tournamentId: tournamentId || null,
         items,
       });
     } catch (error) {
@@ -109,6 +126,7 @@ connectDB()
   .then(async () => {
     await seedAdmin();
     await ensureSettings();
+    await ensureDefaultTournament();
 
     server.listen(port, "0.0.0.0", () => {
       console.log(`Server listening on ${port}`);

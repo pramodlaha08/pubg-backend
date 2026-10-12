@@ -14,6 +14,7 @@ const extractRound = (team, roundNumber) => {
 
 export const createTeamLogEntry = async ({
   req,
+  tournamentId = null,
   eventType,
   severity = "info",
   team,
@@ -25,9 +26,14 @@ export const createTeamLogEntry = async ({
 }) => {
   if (!team || !title || !message || !eventType) return null;
 
+  const resolvedTournamentId =
+    tournamentId || req?.tournamentId || team.tournamentId || null;
+  if (!resolvedTournamentId) return null;
+
   const round = roundNumber ? extractRound(team, roundNumber) : null;
 
   const log = await TeamLog.create({
+    tournamentId: resolvedTournamentId,
     eventType,
     severity,
     roundNumber,
@@ -53,6 +59,7 @@ export const createTeamLogEntry = async ({
     console.log(
       `[TeamLog] Broadcasting team_log_created event: ${log.eventType} for ${log.teamName}`
     );
+    io.to(`t_${resolvedTournamentId}`).emit("team_log_created", log);
     io.emit("team_log_created", log);
     if (team._id) {
       io.to(`team_${team._id}`).emit("team_log_created", log);
@@ -88,13 +95,19 @@ export const logTemplates = {
     playerIndex,
     eliminationCount,
     change,
+    fullEliminationCount = SQUAD_CONFIG.fullEliminationCount,
   }) => ({
     title: `Knock State Changed: ${team.name}`,
-    message: `Round ${roundNumber}: Player #${playerIndex + 1} ${change > 0 ? "knocked/eliminated" : "revived/removed"}. ${team.name} now has ${eliminationCount}/${SQUAD_CONFIG.fullEliminationCount} eliminated players.`,
+    message: `Round ${roundNumber}: Player #${playerIndex + 1} ${change > 0 ? "knocked/eliminated" : "revived/removed"}. ${team.name} now has ${eliminationCount}/${fullEliminationCount} eliminated players.`,
   }),
-  teamEliminated: ({ team, roundNumber, eliminationCount }) => ({
+  teamEliminated: ({
+    team,
+    roundNumber,
+    eliminationCount,
+    fullEliminationCount = SQUAD_CONFIG.fullEliminationCount,
+  }) => ({
     title: `Team Eliminated: ${team.name}`,
-    message: `Round ${roundNumber}: ${team.name} is out (${eliminationCount}/${SQUAD_CONFIG.fullEliminationCount}). Final running total: ${team.totalPoints} pts.`,
+    message: `Round ${roundNumber}: ${team.name} is out (${eliminationCount}/${fullEliminationCount}). Final running total: ${team.totalPoints} pts.`,
   }),
   positionUpdated: ({
     team,
@@ -114,4 +127,15 @@ export const logTemplates = {
     title: `Team Removed: ${team.name}`,
     message: `${team.name} (Slot ${team.slot}) removed from tournament table. Last known total was ${team.totalPoints} pts.`,
   }),
+  teamUpdated: ({ team, changes }) => {
+    const summary = Array.isArray(changes)
+      ? changes
+          .map((change) => `${change.field}: ${change.previous || "-"} -> ${change.current}`)
+          .join(", ")
+      : "";
+    return {
+      title: `Team Updated: ${team.name}`,
+      message: `Slot ${team.slot} updated${summary ? ` (${summary})` : ""}.`,
+    };
+  },
 };

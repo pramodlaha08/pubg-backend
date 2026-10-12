@@ -1,5 +1,6 @@
-import { Settings } from "../models/settings.model.js";
+import { Tournament } from "../models/tournament.model.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
+import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 const HEX = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
@@ -17,6 +18,37 @@ const COLOR_KEYS = [
   "aliveBar",
   "deadBar",
   "textPrimary",
+  "panelFrom",
+  "panelTo",
+  "placeColor",
+  "elimColor",
+  "totalColor",
+  "danger",
+  "warning",
+  "notificationFrom",
+  "notificationTo",
+];
+
+const COLUMN_KEYS = ["logo", "alive", "pts", "elims"];
+const NOTIFICATION_BOOLEANS = [
+  "showLogo",
+  "showKills",
+  "showRank",
+  "showRound",
+];
+const LEADERBOARD_BOOLEANS = [
+  "showLogo",
+  "showPlace",
+  "showElims",
+  "showTotal",
+  "showChickens",
+];
+const MATCH_BOOLEANS = [
+  "showLogo",
+  "showRank",
+  "showElims",
+  "showPlace",
+  "showTotal",
 ];
 
 const clampNumber = (value, min, max, fallback) => {
@@ -25,9 +57,16 @@ const clampNumber = (value, min, max, fallback) => {
   return Math.min(max, Math.max(min, num));
 };
 
-const sanitizePointsTable = (input, current) => {
-  const base = current.pointsTable.toObject();
-  const next = JSON.parse(JSON.stringify(base));
+const sanitizePointsTable = (input, base) => {
+  const baseObj = base?.toObject ? base.toObject() : JSON.parse(JSON.stringify(base || {}));
+  const next = JSON.parse(JSON.stringify(baseObj));
+  next.colors ??= {};
+  next.columns ??= {};
+  next.header ??= {};
+  next.layout ??= {};
+  next.notifications ??= {};
+  next.leaderboard ??= {};
+  next.match ??= {};
   const source = input && typeof input === "object" ? input : {};
 
   if (typeof source.preset === "string") {
@@ -44,7 +83,7 @@ const sanitizePointsTable = (input, current) => {
   }
 
   if (source.columns && typeof source.columns === "object") {
-    for (const key of ["alive", "pts", "elims"]) {
+    for (const key of COLUMN_KEYS) {
       if (typeof source.columns[key] === "boolean") {
         next.columns[key] = source.columns[key];
       }
@@ -79,27 +118,80 @@ const sanitizePointsTable = (input, current) => {
     }
   }
 
+  if (source.notifications && typeof source.notifications === "object") {
+    for (const key of NOTIFICATION_BOOLEANS) {
+      if (typeof source.notifications[key] === "boolean") {
+        next.notifications[key] = source.notifications[key];
+      }
+    }
+    if (source.notifications.durationMs !== undefined) {
+      next.notifications.durationMs = Math.round(
+        clampNumber(
+          source.notifications.durationMs,
+          1000,
+          15000,
+          next.notifications.durationMs
+        )
+      );
+    }
+  }
+
+  if (source.leaderboard && typeof source.leaderboard === "object") {
+    for (const key of LEADERBOARD_BOOLEANS) {
+      if (typeof source.leaderboard[key] === "boolean") {
+        next.leaderboard[key] = source.leaderboard[key];
+      }
+    }
+  }
+
+  if (source.match && typeof source.match === "object") {
+    for (const key of MATCH_BOOLEANS) {
+      if (typeof source.match[key] === "boolean") {
+        next.match[key] = source.match[key];
+      }
+    }
+  }
+
   return next;
 };
 
 export const getSettings = asyncHandler(async (req, res) => {
-  let settings = await Settings.findOne({ key: "app" });
-  if (!settings) {
-    settings = await Settings.create({ key: "app" });
-  }
-  res.status(200).json(new ApiResponse(200, settings, "Settings fetched"));
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        key: "app",
+        tournamentId: req.tournamentId,
+        pointsTable: req.tournament.design,
+      },
+      "Settings fetched"
+    )
+  );
 });
 
 export const updateSettings = asyncHandler(async (req, res) => {
-  let settings = await Settings.findOne({ key: "app" });
-  if (!settings) {
-    settings = await Settings.create({ key: "app" });
+  const tournament = req.tournament;
+  const current = await Tournament.findById(tournament._id);
+  if (!current) {
+    throw new ApiError(404, "Tournament not found");
   }
 
-  settings.pointsTable = sanitizePointsTable(req.body?.pointsTable, settings);
-  await settings.save();
+  current.design = sanitizePointsTable(req.body?.pointsTable, current.design);
+  await current.save();
 
-  req.app.io?.emit("settings_updated", settings);
+  const payload = {
+    tournamentId: String(current._id),
+    pointsTable: current.design,
+  };
 
-  res.status(200).json(new ApiResponse(200, settings, "Settings updated"));
+  req.app.io?.to(`t_${current._id}`).emit("settings_updated", payload);
+  req.app.io?.emit("settings_updated", payload);
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { key: "app", tournamentId: current._id, pointsTable: current.design },
+      "Settings updated"
+    )
+  );
 });

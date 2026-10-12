@@ -5,7 +5,10 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "dev": "nodemon -r dotenv/config src/index.js --host 0.0.0.0"
+    "dev": "nodemon -r dotenv/config src/index.js --host 0.0.0.0",
+    "seed:sample": "node -r dotenv/config src/utils/seedSample.js",
+    "migrate:tournaments": "node -r dotenv/config src/utils/migrateTournaments.js",
+    "recompute:totals": "node -r dotenv/config src/utils/recomputeTotals.js"
   },
   "keywords": [
     "backend",

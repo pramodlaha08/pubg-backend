@@ -1,5 +1,7 @@
 // Team Controller
 import { Team } from "../models/team.model.js";
+import { EliminationNotification } from "../models/eliminationNotification.model.js";
+import { TeamLog } from "../models/teamLog.model.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { uploadOnCloudinary } from "../utils/cloudinary.js";
@@ -9,29 +11,17 @@ import {
   syncEliminationRealtime,
   flushEliminationRecords,
 } from "../utils/eliminationRealtime.helper.js";
-import SQUAD_CONFIG from "../config/squadSize.js";
+import { getScoringConfig, recomputeTeamScores } from "../utils/scoring.helper.js";
 import mongoose from "mongoose";
 
-// Position points mapping
-const POSITION_POINTS = {
-  1: 10,
-  2: 6,
-  3: 5,
-  4: 4,
-  5: 3,
-  6: 2,
-  7: 1,
-  8: 1,
-  9: 0,
-  10: 0,
-  11: 0,
-  12: 0,
-  13: 0,
-  14: 0,
-  15: 0,
-  16: 0,
+const DEFAULT_TEAM_LOGO = process.env.DEFAULT_TEAM_LOGO || "/placeholder.svg";
+
+const broadcast = (req, event, payload) => {
+  const io = req.app?.io;
+  if (!io) return;
+  if (req.tournamentId) io.to(`t_${req.tournamentId}`).emit(event, payload);
+  io.emit(event, payload);
 };
-const KILL_POINT_MULTIPLIER = 1;
 
 const safeCreateTeamLog = async (payload) => {
   try {
@@ -49,19 +39,44 @@ const createTeam = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Name and slot are required");
   }
 
-  const existingSlot = await Team.findOne({ slot });
+  const existingSlot = await Team.findOne({ slot, tournamentId: req.tournamentId });
   if (existingSlot) {
     throw new ApiError(400, `Slot ${slot} already occupied`);
   }
 
+  const trimmedName = String(name).trim();
+  const existingName = await Team.findOne({
+    name: trimmedName,
+    tournamentId: req.tournamentId,
+  });
+  if (existingName) {
+    throw new ApiError(400, `Team "${trimmedName}" already exists in this tournament`);
+  }
+
   const logoLocalPath = req.file?.path;
   if (!logoLocalPath) throw new ApiError(400, "Logo is required");
-  const logo = await uploadOnCloudinary(logoLocalPath);
+
+  const cloudinaryConfigured = Boolean(
+    process.env.CLOUD_NAME &&
+      process.env.CLOUD_API_KEY &&
+      process.env.CLOUD_API_SECRET
+  );
+
+  let logoUrl = "";
+  if (cloudinaryConfigured) {
+    const logo = await uploadOnCloudinary(logoLocalPath);
+    logoUrl = logo?.url || "";
+  } else {
+    const base =
+      process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
+    logoUrl = `${base}/temp/${encodeURIComponent(req.file.filename)}`;
+  }
 
   const team = await Team.create({
-    name,
+    name: trimmedName,
     slot,
-    logo: logo.url,
+    tournamentId: req.tournamentId,
+    logo: logoUrl,
     rounds: [],
     currentRound: 0,
     isEliminated: false,
@@ -88,11 +103,155 @@ const createTeam = asyncHandler(async (req, res) => {
     ],
   });
 
-  req.app.io.emit("team_created", team);
+  broadcast(req, "team_created", team);
 
   return res
     .status(201)
     .json(new ApiResponse(201, team, "Team created successfully"));
+});
+
+// Bulk Create / Update Teams
+const createBulkTeams = asyncHandler(async (req, res) => {
+  const { teams } = req.body || {};
+
+  if (!Array.isArray(teams) || teams.length === 0) {
+    throw new ApiError(400, "teams must be a non-empty array");
+  }
+
+  const created = [];
+  const updated = [];
+  const unchanged = [];
+  const skipped = [];
+  const seenSlots = new Set();
+
+  for (const row of teams) {
+    const slot = Number(row?.slot);
+    const name = String(row?.name || "").trim();
+
+    if (!Number.isInteger(slot) || slot < 1) {
+      skipped.push({ slot: row?.slot ?? null, name, reason: "Invalid slot number" });
+      continue;
+    }
+    if (!name) {
+      skipped.push({ slot, name, reason: "Missing team name" });
+      continue;
+    }
+    if (seenSlots.has(slot)) {
+      skipped.push({ slot, name, reason: "Duplicate slot within import" });
+      continue;
+    }
+    seenSlots.add(slot);
+
+    const existing = await Team.findOne({ slot, tournamentId: req.tournamentId });
+
+    if (existing) {
+      if (existing.name === name) {
+        unchanged.push({ _id: existing._id, slot, name });
+        continue;
+      }
+
+      const nameTaken = await Team.findOne({
+        name,
+        tournamentId: req.tournamentId,
+        _id: { $ne: existing._id },
+      });
+      if (nameTaken) {
+        skipped.push({
+          slot,
+          name,
+          reason: `Name "${name}" already used by slot ${nameTaken.slot}`,
+        });
+        continue;
+      }
+
+      const previousName = existing.name;
+      existing.name = name;
+      await existing.save();
+
+      const template = logTemplates.teamUpdated({
+        team: existing,
+        changes: [{ field: "name", previous: previousName, current: name }],
+      });
+      await safeCreateTeamLog({
+        req,
+        eventType: "TEAM_UPDATED",
+        severity: "info",
+        team: existing,
+        roundNumber: existing.currentRound || null,
+        title: template.title,
+        message: template.message,
+        changes: [{ field: "name", previous: previousName, current: name }],
+      });
+
+      broadcast(req, "team_updated", existing);
+      updated.push({ _id: existing._id, slot, from: previousName, to: name });
+      continue;
+    }
+
+    const nameTaken = await Team.findOne({ name, tournamentId: req.tournamentId });
+    if (nameTaken) {
+      skipped.push({
+        slot,
+        name,
+        reason: `Name "${name}" already used by slot ${nameTaken.slot}`,
+      });
+      continue;
+    }
+
+    const team = await Team.create({
+      name,
+      slot,
+      tournamentId: req.tournamentId,
+      logo: DEFAULT_TEAM_LOGO,
+      rounds: [],
+      currentRound: 0,
+      isEliminated: false,
+      totalPoints: 0,
+    });
+
+    const template = logTemplates.teamCreated({ team });
+    await safeCreateTeamLog({
+      req,
+      eventType: "TEAM_CREATED",
+      severity: "highlight",
+      team,
+      title: template.title,
+      message: template.message,
+      changes: [
+        { field: "name", previous: null, current: team.name },
+        { field: "slot", previous: null, current: team.slot },
+        {
+          field: "totalPoints",
+          previous: null,
+          current: team.totalPoints,
+          delta: 0,
+        },
+      ],
+    });
+
+    broadcast(req, "team_created", team);
+    created.push(team);
+  }
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        summary: {
+          created: created.length,
+          updated: updated.length,
+          unchanged: unchanged.length,
+          skipped: skipped.length,
+          total: teams.length,
+        },
+        created,
+        updated,
+        unchanged,
+        skipped,
+      },
+      "Bulk import complete"
+    )
+  );
 });
 
 // Create New Round
@@ -106,13 +265,23 @@ const createRound = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Round number must be a positive integer");
   }
 
-  const teams = await Team.find({ slot: { $in: slots } });
+  const teams = await Team.find({ slot: { $in: slots }, tournamentId: req.tournamentId });
   if (teams.length === 0) {
     throw new ApiError(404, "No teams found for provided slots");
   }
 
+  // Validate every selected team before mutating so we never write partially.
+  for (const team of teams) {
+    if (team.rounds.some((r) => r.roundNumber === roundNumber)) {
+      throw new ApiError(
+        400,
+        `Round ${roundNumber} already exists for team ${team.slot}`
+      );
+    }
+  }
+
   // Flush old elimination records for this round to start fresh
-  const flushedCount = await flushEliminationRecords(roundNumber);
+  const flushedCount = await flushEliminationRecords(roundNumber, req.tournamentId);
   if (process.env.DEBUG_MODE === "true") {
     console.log(
       `[CREATE_ROUND] Flushed ${flushedCount} elimination records for round ${roundNumber}`
@@ -174,9 +343,9 @@ const createRound = asyncHandler(async (req, res) => {
     })
   );
 
-  const updatedTeams = await Team.find({ slot: { $in: slots } });
+  const updatedTeams = await Team.find({ slot: { $in: slots }, tournamentId: req.tournamentId });
 
-  req.app.io.emit("round_created", {
+  broadcast(req, "round_created", {
     roundNumber,
     teams: updatedTeams,
   });
@@ -207,10 +376,12 @@ const deleteRoundFromTeams = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Round number must be a positive integer");
   }
 
-  const teams = await Team.find({ slot: { $in: slots } });
+  const teams = await Team.find({ slot: { $in: slots }, tournamentId: req.tournamentId });
   if (teams.length === 0) {
     throw new ApiError(404, "No teams found for provided slots");
   }
+
+  const scoring = getScoringConfig(req.tournament);
 
   const results = await Promise.allSettled(
     teams.map(async (team) => {
@@ -231,8 +402,8 @@ const deleteRoundFromTeams = asyncHandler(async (req, res) => {
           deletedRound.killPoints + deletedRound.positionPoints;
         const oldTotalPoints = team.totalPoints;
 
-        team.totalPoints -= deductedPoints;
         team.rounds.splice(roundIndex, 1);
+        recomputeTeamScores(team, scoring);
 
         if (team.currentRound === roundNumber) {
           team.currentRound =
@@ -245,7 +416,7 @@ const deleteRoundFromTeams = asyncHandler(async (req, res) => {
           (r) => r.roundNumber === team.currentRound
         );
         team.isEliminated =
-          currentRound?.eliminationCount >= SQUAD_CONFIG.fullEliminationCount;
+          currentRound?.eliminationCount >= scoring.fullEliminationCount;
 
         await team.save();
 
@@ -314,7 +485,17 @@ const deleteRoundFromTeams = asyncHandler(async (req, res) => {
     throw new ApiError(207, `Partial success: ${errorDetails}`);
   }
 
-  req.app.io.emit("round_deleted", {
+  // Cascade: remove elimination records and logs tied to the deleted round.
+  await Promise.all([
+    EliminationNotification.deleteMany({ tournamentId: req.tournamentId, roundNumber }),
+    TeamLog.deleteMany({
+      tournamentId: req.tournamentId,
+      roundNumber,
+      eventType: { $ne: "ROUND_DELETED" },
+    }),
+  ]);
+
+  broadcast(req, "round_deleted", {
     roundNumber,
     affectedSlots: slots,
     success: true,
@@ -340,7 +521,7 @@ const updateKills = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Invalid kills value");
   }
 
-  const team = await Team.findById(teamId);
+  const team = await Team.findOne({ _id: teamId, tournamentId: req.tournamentId });
   if (!team) {
     throw new ApiError(404, "Team not found");
   }
@@ -356,9 +537,10 @@ const updateKills = asyncHandler(async (req, res) => {
   const oldKillPoints = currentRound.killPoints;
   const oldTotalPoints = team.totalPoints;
 
+  const scoring = getScoringConfig(req.tournament);
+
   currentRound.kills += kills;
-  currentRound.killPoints = currentRound.kills * KILL_POINT_MULTIPLIER;
-  team.totalPoints += kills * KILL_POINT_MULTIPLIER;
+  recomputeTeamScores(team, scoring);
 
   await team.save();
 
@@ -408,7 +590,7 @@ const updateKills = asyncHandler(async (req, res) => {
 const addKill = asyncHandler(async (req, res) => {
   const { teamId } = req.params;
 
-  const team = await Team.findById(teamId);
+  const team = await Team.findOne({ _id: teamId, tournamentId: req.tournamentId });
   if (!team) {
     throw new ApiError(404, "Team not found");
   }
@@ -424,9 +606,10 @@ const addKill = asyncHandler(async (req, res) => {
   const oldKillPoints = currentRound.killPoints;
   const oldTotalPoints = team.totalPoints;
 
+  const scoring = getScoringConfig(req.tournament);
+
   currentRound.kills += 1;
-  currentRound.killPoints = currentRound.kills * KILL_POINT_MULTIPLIER;
-  team.totalPoints += KILL_POINT_MULTIPLIER;
+  recomputeTeamScores(team, scoring);
 
   await team.save();
 
@@ -476,7 +659,7 @@ const addKill = asyncHandler(async (req, res) => {
 const decreaseKill = asyncHandler(async (req, res) => {
   const { teamId } = req.params;
 
-  const team = await Team.findById(teamId);
+  const team = await Team.findOne({ _id: teamId, tournamentId: req.tournamentId });
   if (!team) {
     throw new ApiError(404, "Team not found");
   }
@@ -492,11 +675,12 @@ const decreaseKill = asyncHandler(async (req, res) => {
   const oldKillPoints = currentRound.killPoints;
   const oldTotalPoints = team.totalPoints;
 
+  const scoring = getScoringConfig(req.tournament);
+
   if (currentRound.kills > 0) {
     currentRound.kills -= 1;
-    currentRound.killPoints = currentRound.kills * KILL_POINT_MULTIPLIER;
-    team.totalPoints -= KILL_POINT_MULTIPLIER;
   }
+  recomputeTeamScores(team, scoring);
 
   await team.save();
 
@@ -551,17 +735,19 @@ const handleElimination = asyncHandler(async (req, res) => {
   const { teamId } = req.params;
   const { playerIndex } = req.body;
 
+  const scoring = getScoringConfig(req.tournament);
+
   if (
     playerIndex === undefined ||
-    !SQUAD_CONFIG.isValidPlayerIndex(playerIndex)
+    !scoring.isValidPlayerIndex(playerIndex)
   ) {
     throw new ApiError(
       400,
-      `Invalid player index (0-${SQUAD_CONFIG.maxPlayerIndex} required)`
+      `Invalid player index (0-${scoring.maxPlayerIndex} required)`
     );
   }
 
-  const team = await Team.findById(teamId);
+  const team = await Team.findOne({ _id: teamId, tournamentId: req.tournamentId });
   if (!team) {
     throw new ApiError(404, "Team not found");
   }
@@ -590,17 +776,17 @@ const handleElimination = asyncHandler(async (req, res) => {
   currentRound.eliminationCount += eliminationChange;
   currentRound.eliminationCount = Math.max(
     0,
-    Math.min(SQUAD_CONFIG.fullEliminationCount, currentRound.eliminationCount)
+    Math.min(scoring.fullEliminationCount, currentRound.eliminationCount)
   );
 
   currentRound.status =
-    currentRound.eliminationCount === SQUAD_CONFIG.fullEliminationCount
+    currentRound.eliminationCount === scoring.fullEliminationCount
       ? "eliminated"
       : "alive";
 
   const oldTeamEliminated = team.isEliminated;
   team.isEliminated =
-    currentRound.eliminationCount === SQUAD_CONFIG.fullEliminationCount;
+    currentRound.eliminationCount === scoring.fullEliminationCount;
 
   await team.save();
   void syncEliminationRealtime({ req, team, round: currentRound }).catch(
@@ -615,6 +801,7 @@ const handleElimination = asyncHandler(async (req, res) => {
     playerIndex,
     eliminationCount: currentRound.eliminationCount,
     change: eliminationChange,
+    fullEliminationCount: scoring.fullEliminationCount,
   });
 
   void safeCreateTeamLog({
@@ -649,11 +836,12 @@ const handleElimination = asyncHandler(async (req, res) => {
     },
   });
 
-  if (currentRound.eliminationCount === SQUAD_CONFIG.fullEliminationCount) {
+  if (currentRound.eliminationCount === scoring.fullEliminationCount) {
     const eliminatedTemplate = logTemplates.teamEliminated({
       team,
       roundNumber: team.currentRound,
       eliminationCount: currentRound.eliminationCount,
+      fullEliminationCount: scoring.fullEliminationCount,
     });
 
     void safeCreateTeamLog({
@@ -690,7 +878,9 @@ const handleElimination = asyncHandler(async (req, res) => {
 
 // Get All Teams
 const getAllTeams = asyncHandler(async (req, res) => {
-  const teams = await Team.find().sort({ totalPoints: -1 });
+  const teams = await Team.find({ tournamentId: req.tournamentId }).sort({
+    totalPoints: -1,
+  });
   return res
     .status(200)
     .json(new ApiResponse(200, teams, "Teams retrieved successfully"));
@@ -703,7 +893,10 @@ const deleteTeam = asyncHandler(async (req, res) => {
   if (!mongoose.isValidObjectId(teamId))
     throw new ApiError(400, "Invalid team ID");
 
-  const team = await Team.findByIdAndDelete(teamId);
+  const team = await Team.findOneAndDelete({
+    _id: teamId,
+    tournamentId: req.tournamentId,
+  });
   if (!team) {
     throw new ApiError(404, "Team not found");
   }
@@ -728,10 +921,121 @@ const deleteTeam = asyncHandler(async (req, res) => {
     ],
   });
 
-  req.app.io.emit("team_deleted", teamId);
+  broadcast(req, "team_deleted", teamId);
+
+  // Cascade: remove elimination records and logs tied to the deleted team.
+  await Promise.all([
+    EliminationNotification.deleteMany({
+      tournamentId: req.tournamentId,
+      teamId,
+    }),
+    TeamLog.deleteMany({
+      tournamentId: req.tournamentId,
+      teamId,
+      eventType: { $ne: "TEAM_DELETED" },
+    }),
+  ]);
+
   return res
     .status(200)
     .json(new ApiResponse(200, null, "Team deleted successfully"));
+});
+
+// Update Team
+const updateTeam = asyncHandler(async (req, res) => {
+  const { teamId } = req.params;
+
+  if (!mongoose.isValidObjectId(teamId))
+    throw new ApiError(400, "Invalid team ID");
+
+  const team = await Team.findOne({ _id: teamId, tournamentId: req.tournamentId });
+  if (!team) {
+    throw new ApiError(404, "Team not found");
+  }
+
+  const { name, slot } = req.body || {};
+  const changes = [];
+
+  if (name !== undefined) {
+    const nextName = String(name).trim();
+    if (!nextName) throw new ApiError(400, "Name cannot be empty");
+    if (nextName !== team.name) {
+      const duplicate = await Team.findOne({
+        name: nextName,
+        tournamentId: req.tournamentId,
+        _id: { $ne: team._id },
+      });
+      if (duplicate)
+        throw new ApiError(400, `Team name "${nextName}" already exists`);
+      changes.push({ field: "name", previous: team.name, current: nextName });
+      team.name = nextName;
+    }
+  }
+
+  if (slot !== undefined) {
+    const nextSlot = Number(slot);
+    if (!Number.isInteger(nextSlot) || nextSlot < 1)
+      throw new ApiError(400, "Slot must be a positive integer");
+    if (nextSlot !== team.slot) {
+      const duplicate = await Team.findOne({
+        slot: nextSlot,
+        tournamentId: req.tournamentId,
+        _id: { $ne: team._id },
+      });
+      if (duplicate) throw new ApiError(400, `Slot ${nextSlot} already occupied`);
+      changes.push({ field: "slot", previous: team.slot, current: nextSlot });
+      team.slot = nextSlot;
+    }
+  }
+
+  if (req.file?.path) {
+    const cloudinaryConfigured = Boolean(
+      process.env.CLOUD_NAME &&
+        process.env.CLOUD_API_KEY &&
+        process.env.CLOUD_API_SECRET
+    );
+
+    let logoUrl = "";
+    if (cloudinaryConfigured) {
+      const logo = await uploadOnCloudinary(req.file.path);
+      logoUrl = logo?.url || "";
+    } else {
+      const base =
+        process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
+      logoUrl = `${base}/temp/${encodeURIComponent(req.file.filename)}`;
+    }
+
+    if (logoUrl && logoUrl !== team.logo) {
+      changes.push({ field: "logo", previous: team.logo, current: logoUrl });
+      team.logo = logoUrl;
+    }
+  }
+
+  if (changes.length === 0) {
+    return res
+      .status(200)
+      .json(new ApiResponse(200, team, "No changes applied"));
+  }
+
+  await team.save();
+
+  const template = logTemplates.teamUpdated({ team, changes });
+  await safeCreateTeamLog({
+    req,
+    eventType: "TEAM_UPDATED",
+    severity: "info",
+    team,
+    roundNumber: team.currentRound || null,
+    title: template.title,
+    message: template.message,
+    changes,
+  });
+
+  broadcast(req, "team_updated", team);
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, team, "Team updated successfully"));
 });
 
 // Update Round Positions
@@ -742,7 +1046,8 @@ const updateRoundPositions = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Slot positions must be an array");
   }
 
-  const teams = await Team.find();
+  const teams = await Team.find({ tournamentId: req.tournamentId });
+  const scoring = getScoringConfig(req.tournament);
   const updates = await Promise.all(
     slotPositions.map(async ({ slot, position }) => {
       const team = teams.find((t) => t.slot === slot);
@@ -760,13 +1065,10 @@ const updateRoundPositions = asyncHandler(async (req, res) => {
       const oldPoints = round.positionPoints;
       const oldTotalPoints = team.totalPoints;
 
-      const newPoints = POSITION_POINTS[position] || 0;
-      const pointsDifference = newPoints - oldPoints;
-
       round.position = position;
-      round.positionPoints = newPoints;
+      recomputeTeamScores(team, scoring);
 
-      team.totalPoints += pointsDifference;
+      const pointsDifference = round.positionPoints - oldPoints;
 
       await team.save();
 
@@ -796,7 +1098,7 @@ const updateRoundPositions = asyncHandler(async (req, res) => {
           {
             field: "round.positionPoints",
             previous: oldPoints,
-            current: newPoints,
+            current: round.positionPoints,
             delta: pointsDifference,
           },
           {
@@ -813,7 +1115,7 @@ const updateRoundPositions = asyncHandler(async (req, res) => {
   );
 
   const validUpdates = updates.filter((update) => update !== null);
-  req.app.io.emit("positions_updated", {
+  broadcast(req, "positions_updated", {
     roundNumber,
     slotPositions,
   });
@@ -834,7 +1136,10 @@ const getTeamsByRound = async (req, res) => {
       });
     }
 
-    const teams = await Team.find({ "rounds.roundNumber": roundNumber });
+    const teams = await Team.find({
+      tournamentId: req.tournamentId,
+      "rounds.roundNumber": roundNumber,
+    });
 
     if (!teams.length) {
       return res.status(404).json({
@@ -871,11 +1176,13 @@ const getTeamsByRound = async (req, res) => {
 
 export {
   createTeam,
+  createBulkTeams,
   createRound,
   updateKills,
   handleElimination,
   getAllTeams,
   deleteTeam,
+  updateTeam,
   updateRoundPositions,
   addKill,
   decreaseKill,

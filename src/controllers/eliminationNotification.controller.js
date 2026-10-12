@@ -3,7 +3,7 @@ import { Team } from "../models/team.model.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
-import SQUAD_CONFIG from "../config/squadSize.js";
+import { getScoringConfig } from "../utils/scoring.helper.js";
 
 // Track or create elimination
 export const trackElimination = asyncHandler(async (req, res) => {
@@ -13,7 +13,7 @@ export const trackElimination = asyncHandler(async (req, res) => {
     throw new ApiError(400, "teamId and roundNumber are required");
   }
 
-  const team = await Team.findById(teamId);
+  const team = await Team.findOne({ _id: teamId, tournamentId: req.tournamentId });
   if (!team) {
     throw new ApiError(404, "Team not found");
   }
@@ -24,11 +24,13 @@ export const trackElimination = asyncHandler(async (req, res) => {
   }
 
   const isEliminated =
-    round.eliminationCount >= SQUAD_CONFIG.fullEliminationCount;
+    round.eliminationCount >=
+    getScoringConfig(req.tournament).fullEliminationCount;
 
   const notification = await EliminationNotification.findOneAndUpdate(
-    { teamId, roundNumber },
+    { tournamentId: req.tournamentId, teamId, roundNumber },
     {
+      tournamentId: req.tournamentId,
       teamId,
       teamName: team.name,
       teamLogo: team.logo || "",
@@ -51,6 +53,7 @@ export const checkDisplayStatus = asyncHandler(async (req, res) => {
   const { teamId, roundNumber } = req.params;
 
   const notification = await EliminationNotification.findOne({
+    tournamentId: req.tournamentId,
     teamId,
     roundNumber: parseInt(roundNumber),
   });
@@ -87,6 +90,7 @@ export const markAsDisplayed2 = asyncHandler(async (req, res) => {
   }
 
   const notification = await EliminationNotification.findOne({
+    tournamentId: req.tournamentId,
     teamId,
     roundNumber,
   });
@@ -102,23 +106,27 @@ export const markAsDisplayed2 = asyncHandler(async (req, res) => {
 
 // Sync eliminations from Team data
 export const syncEliminations = asyncHandler(async (req, res) => {
-  const teams = await Team.find({});
+  const tournamentId = req.tournamentId;
+  const teams = await Team.find({ tournamentId });
+  const { fullEliminationCount } = getScoringConfig(req.tournament);
 
   let synced = 0;
 
   for (const team of teams) {
     for (const round of team.rounds) {
       const isEliminated =
-        round.eliminationCount >= SQUAD_CONFIG.fullEliminationCount;
+        round.eliminationCount >= fullEliminationCount;
       const status = isEliminated ? "eliminated" : "alive";
 
       let notification = await EliminationNotification.findOne({
+        tournamentId,
         teamId: team._id,
         roundNumber: round.roundNumber,
       });
 
       if (!notification) {
         notification = await EliminationNotification.create({
+          tournamentId,
           teamId: team._id,
           teamName: team.name,
           teamLogo: team.logo || "",
@@ -146,11 +154,15 @@ export const syncEliminations = asyncHandler(async (req, res) => {
   }
 
   const eliminated = await EliminationNotification.find({
+    tournamentId,
     status: "eliminated",
     eliminationOrder: 0,
   }).sort({ createdAt: 1 });
 
-  let order = await EliminationNotification.countDocuments({ status: "alive" });
+  let order = await EliminationNotification.countDocuments({
+    tournamentId,
+    status: "alive",
+  });
   for (const notif of eliminated) {
     notif.eliminationOrder = order;
     await notif.save();
@@ -167,6 +179,7 @@ export const getPendingNotifications = asyncHandler(async (req, res) => {
   const { roundNumber } = req.query;
 
   const query = {
+    tournamentId: req.tournamentId,
     status: "eliminated",
   };
 
@@ -205,7 +218,7 @@ export const resetRound = asyncHandler(async (req, res) => {
   const { roundNumber } = req.params;
 
   await EliminationNotification.updateMany(
-    { roundNumber: parseInt(roundNumber) },
+    { tournamentId: req.tournamentId, roundNumber: parseInt(roundNumber) },
     {
       displayed: false,
       status: "alive",
@@ -223,7 +236,10 @@ export const resetRound = asyncHandler(async (req, res) => {
 export const getAllNotifications = asyncHandler(async (req, res) => {
   const { roundNumber } = req.query;
 
-  const query = roundNumber ? { roundNumber: parseInt(roundNumber) } : {};
+  const query = { tournamentId: req.tournamentId };
+  if (roundNumber) {
+    query.roundNumber = parseInt(roundNumber);
+  }
 
   const notifications = await EliminationNotification.find(query)
     .sort({ roundNumber: 1, createdAt: 1 })
@@ -236,7 +252,7 @@ export const getAllNotifications = asyncHandler(async (req, res) => {
 
 // Reset all tracking
 export const resetAllTracking = asyncHandler(async (req, res) => {
-  await EliminationNotification.deleteMany({});
+  await EliminationNotification.deleteMany({ tournamentId: req.tournamentId });
 
   return res
     .status(200)

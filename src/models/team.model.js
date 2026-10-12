@@ -16,9 +16,15 @@ const roundSchema = new mongoose.Schema({
 
 const teamSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true, unique: true },
+    tournamentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Tournament",
+      required: true,
+      index: true,
+    },
+    name: { type: String, required: true, trim: true },
     logo: { type: String, default: "" },
-    slot: { type: Number, required: true, unique: true },
+    slot: { type: Number, required: true },
     currentRound: { type: Number, default: 0 },
     isEliminated: { type: Boolean, default: false },
     totalPoints: { type: Number, default: 0 },
@@ -26,5 +32,9 @@ const teamSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Name and slot are unique only within a tournament.
+teamSchema.index({ tournamentId: 1, name: 1 }, { unique: true });
+teamSchema.index({ tournamentId: 1, slot: 1 }, { unique: true });
 
 export const Team = mongoose.model("Team", teamSchema);

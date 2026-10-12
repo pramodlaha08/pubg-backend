@@ -2,10 +2,12 @@ import {Router} from "express";
 import {
   createRound,
   createTeam,
+  createBulkTeams,
   handleElimination,
   updateKills,
   getAllTeams,
   deleteTeam,
+  updateTeam,
   updateRoundPositions,
   addKill,
   decreaseKill,
@@ -20,7 +22,9 @@ const router = Router();
 router.get("/", getAllTeams);
 router.get("/match/:roundNumber", getTeamsByRound);
 router.post("/points", requireAdmin, updateRoundPositions);
+router.post("/bulk", requireAdmin, createBulkTeams);
 router.post("/", requireAdmin, upload.single("logo"), createTeam);
+router.put("/:teamId", requireAdmin, upload.single("logo"), updateTeam);
 router.put("/:teamId/kills", requireAdmin, updateKills);
 router.put("/:teamId/elimination", requireAdmin, handleElimination);
 router.post("/rounds", requireAdmin, createRound);
