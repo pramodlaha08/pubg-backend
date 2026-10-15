@@ -13,7 +13,7 @@ test("ai vision is disabled by default", () => {
 test("buildVisionPrompt embeds the strict JSON shape and rules", () => {
   const prompt = buildVisionPrompt("results");
   assert.match(prompt, /"players"/);
-  assert.match(prompt, /\[\["name",kills,rank\]\]/);
+  assert.match(prompt, /\[\["name",kills,rank,"teamName"\]\]/);
   assert.match(prompt, /Never invent players/);
 });
 
@@ -41,7 +41,7 @@ test("parseAiPlayers normalizes a JSON string payload", () => {
     '{"players":[{"name":"Alpha Squad","slot":"12","kills":7,"rank":1}]}';
   const players = parseAiPlayers(raw, "results");
   assert.deepEqual(players, [
-    { name: "Alpha Squad", slot: 12, kills: 7, rank: 1 },
+    { name: "Alpha Squad", slot: 12, kills: 7, rank: 1, teamName: null },
   ]);
 });
 
@@ -85,8 +85,8 @@ test("parseAiPlayers tolerates an array payload and invalid JSON", () => {
 test("parseAiPlayers reads the compact tuple form (lobby)", () => {
   const players = parseAiPlayers('{"players":[["Foxtrot",7],["Golf",null]]}', "lobby");
   assert.deepEqual(players, [
-    { name: "Foxtrot", slot: 7, kills: null, rank: null },
-    { name: "Golf", slot: null, kills: null, rank: null },
+    { name: "Foxtrot", slot: 7, kills: null, rank: null, teamName: null },
+    { name: "Golf", slot: null, kills: null, rank: null, teamName: null },
   ]);
 });
 
@@ -96,7 +96,30 @@ test("parseAiPlayers reads the compact tuple form (results)", () => {
     "results"
   );
   assert.deepEqual(players, [
-    { name: "Hotel", slot: null, kills: 12, rank: 3 },
-    { name: "India", slot: null, kills: null, rank: 5 },
+    { name: "Hotel", slot: null, kills: 12, rank: 3, teamName: null },
+    { name: "India", slot: null, kills: null, rank: 5, teamName: null },
+  ]);
+});
+
+test("parseAiPlayers reads the team-aware results tuple form", () => {
+  const players = parseAiPlayers(
+    '{"players":[["Alpha",10,1,"DZx"],["Bravo",0,1,"DZx"],["Charlie",3,2,"RDx"]]}',
+    "results"
+  );
+  assert.deepEqual(players, [
+    { name: "Alpha", slot: null, kills: 10, rank: 1, teamName: "DZx" },
+    { name: "Bravo", slot: null, kills: 0, rank: 1, teamName: "DZx" },
+    { name: "Charlie", slot: null, kills: 3, rank: 2, teamName: "RDx" },
+  ]);
+});
+
+test("parseAiPlayers still reads the legacy slot-aware results tuple", () => {
+  const players = parseAiPlayers(
+    '{"players":[["Alpha",10,7,1],["Bravo",10,2,1]]}',
+    "results"
+  );
+  assert.deepEqual(players, [
+    { name: "Alpha", slot: 10, kills: 7, rank: 1, teamName: null },
+    { name: "Bravo", slot: 10, kills: 2, rank: 1, teamName: null },
   ]);
 });

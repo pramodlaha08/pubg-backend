@@ -6,6 +6,7 @@ import { Server } from "socket.io";
 import { TeamLog } from "./models/teamLog.model.js";
 import { getEliminationSnapshot } from "./utils/eliminationRealtime.helper.js";
 import { seedAdmin, ensureSettings, ensureDefaultTournament } from "./utils/seedAdmin.js";
+import { getCorsOrigins } from "./utils/cors.helper.js";
 
 const port = process.env.PORT || 8000;
 
@@ -15,7 +16,7 @@ const server = createServer(app);
 // Configure Socket.IO
 const io = new Server(server, {
   cors: {
-    origin: process.env.CORS_ORIGIN || "*",
+    origin: getCorsOrigins(),
     methods: ["GET", "POST", "PUT", "DELETE"],
   },
 });

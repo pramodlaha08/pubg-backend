@@ -362,27 +362,61 @@ export const aggregateResults = ({ rosterPlayers = [], teams = [], resultRows = 
   const teamPosition = new Map();
   const unmatched = [];
 
+  // The scoreboard shows each panel's team slot explicitly, so matching by slot
+  // is exact and far more reliable than fuzzy name matching.
+  const slotToTeam = new Map();
+  for (const team of teams) {
+    if (team && team.slot != null) slotToTeam.set(Number(team.slot), team);
+  }
+
   const bestName = (name, pool) => {
     const hit = rankCandidates(name, pool)[0];
     return hit && hit.score >= WEAK_MATCH ? hit : null;
   };
 
-  for (const row of resultRows) {
-    // A results screenshot can be either:
-    //  - per-player rows (player name + that player's kills + the TEAM's rank), or
-    //  - one summary row per team (team name + team kills + rank).
-    // Decide by whichever name matches better.
-    const rosterHit = bestName(row.name, rosterPlayers);
-    const teamHit = bestName(row.name, teams);
+  // The team name printed in each results block header is the strongest signal
+  // when the AI can read it: it needs no roster and no slot numbers.
+  const normalizedTeam = new Map();
+  for (const team of teams) {
+    if (team?.name) normalizedTeam.set(normalizeName(team.name), team);
+  }
+  const bestTeamByName = (value) => {
+    const key = normalizeName(value);
+    if (!key) return null;
+    if (normalizedTeam.has(key)) return normalizedTeam.get(key);
+    return bestName(value, teams)?.item || null;
+  };
 
+  for (const row of resultRows) {
     let teamId = null;
     let isPlayerRow = false;
 
-    if (rosterHit && (!teamHit || rosterHit.score >= teamHit.score)) {
+    const slot = row?.slot != null ? Number(row.slot) : null;
+    if (slot != null && slotToTeam.has(slot)) {
+      teamId = String(slotToTeam.get(slot)._id);
       isPlayerRow = true;
-      teamId = rosterHit.item.teamId ? String(rosterHit.item.teamId) : null;
-    } else if (teamHit) {
-      teamId = String(teamHit.item._id);
+    } else {
+      // Prefer the row's own team label (AI results carry a teamName).
+      const labelled = row?.teamName ? bestTeamByName(row.teamName) : null;
+      if (labelled) {
+        teamId = String(labelled._id);
+        // A row whose own name is the team name is a team-summary row.
+        isPlayerRow = normalizeName(row.name) !== normalizeName(labelled.name);
+      } else {
+        // A results screenshot can be either:
+        //  - per-player rows (player name + that player's kills + the TEAM's rank), or
+        //  - one summary row per team (team name + team kills + rank).
+        // Decide by whichever name matches better.
+        const rosterHit = bestName(row.name, rosterPlayers);
+        const teamHit = bestName(row.name, teams);
+
+        if (rosterHit && (!teamHit || rosterHit.score >= teamHit.score)) {
+          isPlayerRow = true;
+          teamId = rosterHit.item.teamId ? String(rosterHit.item.teamId) : null;
+        } else if (teamHit) {
+          teamId = String(teamHit.item._id);
+        }
+      }
     }
 
     if (!teamId) {

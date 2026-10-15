@@ -134,16 +134,25 @@ const readResults = async (file, context = {}) => {
   };
 };
 
-const collectWarnings = ({ rawText, entryCount, unmatched = [], confidence }) => {
+const collectWarnings = ({ rawText, entryCount, unmatched = [], confidence, engine = "" }) => {
   const warnings = [];
   if (!rawText || rawText.trim().length < 3 || entryCount === 0) {
     warnings.push(
       "OCR could not read this screenshot. Try a clearer, higher-resolution image or enter values manually."
     );
-  } else if (confidence != null && confidence < 55) {
-    warnings.push(
-      `Low OCR confidence (${Math.round(confidence)}%). Please double-check the extracted names.`
-    );
+  } else {
+    // Be explicit when the AI pass was unavailable and plain OCR produced the
+    // rows — OCR accuracy is much lower, so the admin must double-check.
+    if (!engine.includes("ai:")) {
+      warnings.push(
+        "AI extraction was unavailable, so this screenshot was read with OCR only (lower accuracy). Verify every value, or retry in a few minutes to use AI."
+      );
+    }
+    if (confidence != null && confidence < 55) {
+      warnings.push(
+        `Low OCR confidence (${Math.round(confidence)}%). Please double-check the extracted names.`
+      );
+    }
   }
   if (unmatched.length) {
     warnings.push(
@@ -222,10 +231,12 @@ export const uploadLobby = asyncHandler(async (req, res) => {
       return { name: entry?.name || key, count };
     });
 
+  const engineLabel = [...engines].join(", ") || "tesseract";
   const warnings = collectWarnings({
     rawText,
     entryCount: entries.length,
     confidence,
+    engine: engineLabel,
   });
   if (duplicates.length) {
     warnings.push(
@@ -249,7 +260,7 @@ export const uploadLobby = asyncHandler(async (req, res) => {
         ocr: {
           confidence,
           fromMemory,
-          engine: [...engines].join(", ") || "tesseract",
+          engine: engineLabel,
           images: files.length,
         },
       },
@@ -415,14 +426,16 @@ export const uploadResults = asyncHandler(async (req, res) => {
     resultRows,
   });
 
-  const teamsWithRound = teams
-    .map((team) => ({
-      _id: team._id,
-      slot: team.slot,
-      name: team.name,
-      round: team.rounds.find((r) => r.roundNumber === roundNumber),
-    }))
-    .filter((team) => team.round);
+  // Include every registered team, not only those already scored this round: the
+  // results screenshot is usually the first source of scores for the round, so
+  // filtering to existing rounds would leave the comparison empty and the admin
+  // with nothing to review.
+  const comparisonTeams = teams.map((team) => ({
+    _id: team._id,
+    slot: team.slot,
+    name: team.name,
+    round: team.rounds.find((r) => r.roundNumber === roundNumber) || null,
+  }));
 
   // Preserve already-applied values: a re-upload only fills teams that were
   // still unmatched, leaving previously verified teams untouched.
@@ -437,7 +450,7 @@ export const uploadResults = asyncHandler(async (req, res) => {
       }
     }
   }
-  for (const team of teamsWithRound) {
+  for (const team of comparisonTeams) {
     const teamId = String(team._id);
     const prior = priorBySlot.get(slotByTeamId.get(teamId));
     if (!prior) continue;
@@ -449,17 +462,19 @@ export const uploadResults = asyncHandler(async (req, res) => {
 
   const scoring = getScoringConfig(req.tournament);
   const comparison = buildComparison({
-    teams: teamsWithRound,
+    teams: comparisonTeams,
     teamKills,
     teamPosition,
     scoring,
   });
 
+  const engineLabel = [...engines].join(", ") || "tesseract";
   const warnings = collectWarnings({
     rawText,
     entryCount: resultRows.length,
     unmatched,
     confidence,
+    engine: engineLabel,
   });
   if (!roster) {
     warnings.push(
@@ -483,7 +498,7 @@ export const uploadResults = asyncHandler(async (req, res) => {
         warnings,
         ocr: {
           confidence,
-          engine: [...engines].join(", ") || "tesseract",
+          engine: engineLabel,
           images: files.length,
           corrected,
         },
