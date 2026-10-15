@@ -2,6 +2,9 @@
 import { Team } from "../models/team.model.js";
 import { EliminationNotification } from "../models/eliminationNotification.model.js";
 import { TeamLog } from "../models/teamLog.model.js";
+import { MatchRoster } from "../models/matchRoster.model.js";
+import { MatchVerification } from "../models/matchVerification.model.js";
+import { PlayerAlias } from "../models/playerAlias.model.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { uploadOnCloudinary } from "../utils/cloudinary.js";
@@ -54,22 +57,23 @@ const createTeam = asyncHandler(async (req, res) => {
   }
 
   const logoLocalPath = req.file?.path;
-  if (!logoLocalPath) throw new ApiError(400, "Logo is required");
 
-  const cloudinaryConfigured = Boolean(
-    process.env.CLOUD_NAME &&
-      process.env.CLOUD_API_KEY &&
-      process.env.CLOUD_API_SECRET
-  );
+  let logoUrl = DEFAULT_TEAM_LOGO;
+  if (logoLocalPath) {
+    const cloudinaryConfigured = Boolean(
+      process.env.CLOUD_NAME &&
+        process.env.CLOUD_API_KEY &&
+        process.env.CLOUD_API_SECRET
+    );
 
-  let logoUrl = "";
-  if (cloudinaryConfigured) {
-    const logo = await uploadOnCloudinary(logoLocalPath);
-    logoUrl = logo?.url || "";
-  } else {
-    const base =
-      process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
-    logoUrl = `${base}/temp/${encodeURIComponent(req.file.filename)}`;
+    if (cloudinaryConfigured) {
+      const logo = await uploadOnCloudinary(logoLocalPath);
+      logoUrl = logo?.url || DEFAULT_TEAM_LOGO;
+    } else {
+      const base =
+        process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
+      logoUrl = `${base}/temp/${encodeURIComponent(req.file.filename)}`;
+    }
   }
 
   const team = await Team.create({
@@ -198,11 +202,16 @@ const createBulkTeams = asyncHandler(async (req, res) => {
       continue;
     }
 
+    const logo =
+      typeof row?.logo === "string" && row.logo.trim()
+        ? row.logo.trim()
+        : DEFAULT_TEAM_LOGO;
+
     const team = await Team.create({
       name,
       slot,
       tournamentId: req.tournamentId,
-      logo: DEFAULT_TEAM_LOGO,
+      logo,
       rounds: [],
       currentRound: 0,
       isEliminated: false,
@@ -923,7 +932,10 @@ const deleteTeam = asyncHandler(async (req, res) => {
 
   broadcast(req, "team_deleted", teamId);
 
-  // Cascade: remove elimination records and logs tied to the deleted team.
+  // Cascade: the team must also vanish from auto-scoring (lobby rosters +
+  // results verifications) and the learned player mapping, so no stale
+  // reference to a deleted team is left behind.
+  const teamObjectId = new mongoose.Types.ObjectId(teamId);
   await Promise.all([
     EliminationNotification.deleteMany({
       tournamentId: req.tournamentId,
@@ -934,6 +946,33 @@ const deleteTeam = asyncHandler(async (req, res) => {
       teamId,
       eventType: { $ne: "TEAM_DELETED" },
     }),
+    // Remove every player mapped to this team (by id) or sitting in its slot
+    // (unmatched rows) from all lobby rosters.
+    MatchRoster.updateMany(
+      { tournamentId: req.tournamentId },
+      {
+        $pull: {
+          players: {
+            $or: [{ teamId: teamObjectId }, { slot: team.slot }],
+          },
+        },
+      }
+    ),
+    // Forget the learned player -> team mappings that pointed at this team.
+    PlayerAlias.deleteMany({
+      tournamentId: req.tournamentId,
+      teamId: teamObjectId,
+    }),
+    // Drop the team from stored results verifications (auto scoring).
+    MatchVerification.updateMany(
+      { tournamentId: req.tournamentId },
+      {
+        $pull: {
+          verified: { teamId: teamObjectId },
+          comparison: { teamId: teamObjectId },
+        },
+      }
+    ),
   ]);
 
   return res

@@ -41,6 +41,7 @@ const pointsTableColumnsSchema = new mongoose.Schema(
 const pointsTableHeaderSchema = new mongoose.Schema(
   {
     title: { type: String, default: "" },
+    subtitle: { type: String, default: "" },
     logoUrl: { type: String, default: "" },
   },
   { _id: false }
@@ -69,6 +70,9 @@ const notificationSettingsSchema = new mongoose.Schema(
 
 const leaderboardSettingsSchema = new mongoose.Schema(
   {
+    showTitle: { type: Boolean, default: true },
+    title: { type: String, default: "" },
+    subtitle: { type: String, default: "" },
     showLogo: { type: Boolean, default: true },
     showPlace: { type: Boolean, default: true },
     showElims: { type: Boolean, default: true },
@@ -80,6 +84,9 @@ const leaderboardSettingsSchema = new mongoose.Schema(
 
 const matchSettingsSchema = new mongoose.Schema(
   {
+    showTitle: { type: Boolean, default: true },
+    title: { type: String, default: "" },
+    subtitle: { type: String, default: "" },
     showLogo: { type: Boolean, default: true },
     showRank: { type: Boolean, default: true },
     showElims: { type: Boolean, default: true },
@@ -103,6 +110,15 @@ export const pointsTableSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const brandingSchema = new mongoose.Schema(
+  {
+    systemName: { type: String, default: "PMWC", trim: true },
+    logoUrl: { type: String, default: "" },
+    faviconUrl: { type: String, default: "" },
+  },
+  { _id: false }
+);
+
 const settingsSchema = new mongoose.Schema(
   {
     key: { type: String, required: true, unique: true, default: "app" },
@@ -110,6 +126,10 @@ const settingsSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Tournament",
       default: null,
+    },
+    branding: {
+      type: brandingSchema,
+      default: () => ({}),
     },
     // Legacy single-tournament design blob. Kept as a backup only; the
     // authoritative design now lives on each Tournament document.

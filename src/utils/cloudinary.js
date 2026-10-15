@@ -67,4 +67,19 @@ const deleteFromCloudinary = async (fileUrl, resourceType = "image") => {
   }
 };
 
-export { uploadOnCloudinary, deleteFromCloudinary };
+const cloudinaryConfigured = () =>
+  Boolean(
+    process.env.CLOUD_NAME &&
+      process.env.CLOUD_API_KEY &&
+      process.env.CLOUD_API_SECRET
+  );
+
+const uploadDataUriOnCloudinary = async (dataUri, folder = "branding") => {
+  const response = await cloudinary.uploader.upload(dataUri, {
+    resource_type: "auto",
+    folder,
+  });
+  return response.url;
+};
+
+export { uploadOnCloudinary, deleteFromCloudinary, cloudinaryConfigured, uploadDataUriOnCloudinary };
