@@ -4,7 +4,9 @@ import { getScoringConfig } from "./scoring.helper.js";
 
 const debugMode = process.env.DEBUG_MODE === "true";
 
-const buildSocketPayload = (doc) => ({
+const buildSocketPayload = (doc) => {
+  if (!doc) return null;
+  return {
   id: String(doc._id),
   tournamentId: doc.tournamentId ? String(doc.tournamentId) : undefined,
   teamId: String(doc.teamId),
@@ -16,7 +18,8 @@ const buildSocketPayload = (doc) => ({
   position: doc.position || 0,
   eliminationOrder: doc.eliminationOrder || 0,
   updatedAt: doc.updatedAt,
-});
+  };
+};
 
 /**
  * Recalculate elimination order for a round.
@@ -176,10 +179,13 @@ export const syncEliminationRealtime = async ({ req, team, round }) => {
       }
     }
   } else {
-    // No status change, just update stats
+    // No status change. If the team has no elimination record yet it is still
+    // alive below the elimination threshold, so there is nothing to sync.
+    if (!existing) return null;
+
     action = "updated";
     notification = await EliminationNotification.findOneAndUpdate(
-      { tournamentId, teamId: team._id, roundNumber: round.roundNumber },
+      { _id: existing._id },
       {
         $set: {
           killCount: round.kills || 0,

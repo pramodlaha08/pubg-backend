@@ -33,13 +33,19 @@ import authRoutes from "./routes/auth.route.js";
 import settingsRoutes from "./routes/settings.route.js";
 import dashboardRoutes from "./routes/dashboard.route.js";
 import tournamentRoutes from "./routes/tournament.route.js";
+import matchRoutes from "./routes/match.route.js";
+import roundInfoRoutes from "./routes/roundInfo.route.js";
+import systemRoutes from "./routes/system.route.js";
 import { resolveTournament } from "./middlewares/resolveTournament.middleware.js";
 
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/tournaments", tournamentRoutes);
+app.use("/api/v1/system", systemRoutes);
 app.use("/api/v1/settings", resolveTournament, settingsRoutes);
 app.use("/api/v1/dashboard", resolveTournament, dashboardRoutes);
 app.use("/api/v1/team", resolveTournament, teamRoutes);
+app.use("/api/v1/match", resolveTournament, matchRoutes);
+app.use("/api/v1/roundinfo", resolveTournament, roundInfoRoutes);
 app.use("/api/v1/elimination", resolveTournament, eliminationNotificationRoutes);
 app.use(
   "/api/v1/elimination-notification",

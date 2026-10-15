@@ -8,7 +8,8 @@
     "dev": "nodemon -r dotenv/config src/index.js --host 0.0.0.0",
     "seed:sample": "node -r dotenv/config src/utils/seedSample.js",
     "migrate:tournaments": "node -r dotenv/config src/utils/migrateTournaments.js",
-    "recompute:totals": "node -r dotenv/config src/utils/recomputeTotals.js"
+    "recompute:totals": "node -r dotenv/config src/utils/recomputeTotals.js",
+    "test": "node --test src/utils/rosterParser.test.js src/utils/aiVision.test.js src/utils/pointsPreview.test.js"
   },
   "keywords": [
     "backend",
@@ -28,7 +29,8 @@
     "mongoose": "^8.10.0",
     "multer": "^1.4.5-lts.1",
     "multer-storage-cloudinary": "^4.0.0",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "tesseract.js": "^5.1.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"

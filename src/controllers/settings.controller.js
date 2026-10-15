@@ -37,19 +37,23 @@ const NOTIFICATION_BOOLEANS = [
   "showRound",
 ];
 const LEADERBOARD_BOOLEANS = [
+  "showTitle",
   "showLogo",
   "showPlace",
   "showElims",
   "showTotal",
   "showChickens",
 ];
+const LEADERBOARD_TEXTS = ["title", "subtitle"];
 const MATCH_BOOLEANS = [
+  "showTitle",
   "showLogo",
   "showRank",
   "showElims",
   "showPlace",
   "showTotal",
 ];
+const MATCH_TEXTS = ["title", "subtitle"];
 
 const clampNumber = (value, min, max, fallback) => {
   const num = Number(value);
@@ -93,6 +97,9 @@ const sanitizePointsTable = (input, base) => {
   if (source.header && typeof source.header === "object") {
     if (typeof source.header.title === "string") {
       next.header.title = source.header.title.slice(0, 80);
+    }
+    if (typeof source.header.subtitle === "string") {
+      next.header.subtitle = source.header.subtitle.slice(0, 80);
     }
     if (typeof source.header.logoUrl === "string") {
       next.header.logoUrl = source.header.logoUrl.slice(0, 500);
@@ -142,12 +149,22 @@ const sanitizePointsTable = (input, base) => {
         next.leaderboard[key] = source.leaderboard[key];
       }
     }
+    for (const key of LEADERBOARD_TEXTS) {
+      if (typeof source.leaderboard[key] === "string") {
+        next.leaderboard[key] = source.leaderboard[key].slice(0, 80);
+      }
+    }
   }
 
   if (source.match && typeof source.match === "object") {
     for (const key of MATCH_BOOLEANS) {
       if (typeof source.match[key] === "boolean") {
         next.match[key] = source.match[key];
+      }
+    }
+    for (const key of MATCH_TEXTS) {
+      if (typeof source.match[key] === "string") {
+        next.match[key] = source.match[key].slice(0, 80);
       }
     }
   }

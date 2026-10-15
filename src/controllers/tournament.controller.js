@@ -3,6 +3,9 @@ import { Tournament } from "../models/tournament.model.js";
 import { Team } from "../models/team.model.js";
 import { EliminationNotification } from "../models/eliminationNotification.model.js";
 import { TeamLog } from "../models/teamLog.model.js";
+import { MatchRoster } from "../models/matchRoster.model.js";
+import { MatchVerification } from "../models/matchVerification.model.js";
+import { PlayerAlias } from "../models/playerAlias.model.js";
 import { Settings } from "../models/settings.model.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { ApiError } from "../utils/ApiError.js";
@@ -369,6 +372,9 @@ export const deleteTournament = asyncHandler(async (req, res) => {
     Team.deleteMany({ tournamentId }),
     EliminationNotification.deleteMany({ tournamentId }),
     TeamLog.deleteMany({ tournamentId }),
+    MatchRoster.deleteMany({ tournamentId }),
+    MatchVerification.deleteMany({ tournamentId }),
+    PlayerAlias.deleteMany({ tournamentId }),
   ]);
   await tournament.deleteOne();
 
