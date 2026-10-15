@@ -180,6 +180,25 @@ test("aggregateResults sums per-player rows that each carry the team rank", () =
   assert.equal(teamPosition.get("t2"), 2);
 });
 
+test("aggregateResults matches rows by team label without a roster", () => {
+  const rows = [
+    { rank: 1, name: "Ghost", kills: 9, teamName: "Alpha Squad" },
+    { rank: 1, name: "Ranger", kills: 5, teamName: "Alpha Squad" },
+    { rank: 2, name: "Viper", kills: 7, teamName: "Bravo Kings" },
+  ];
+  const { teamKills, teamPosition, unmatched } = aggregateResults({
+    rosterPlayers: [],
+    teams,
+    resultRows: rows,
+  });
+
+  assert.equal(unmatched.length, 0);
+  assert.equal(teamKills.get("t1"), 14);
+  assert.equal(teamKills.get("t2"), 7);
+  assert.equal(teamPosition.get("t1"), 1);
+  assert.equal(teamPosition.get("t2"), 2);
+});
+
 test("aggregateResults uses team rows for kills and placement", () => {
   const resultRows = [
     { rank: 1, name: "AlphaSquad", kills: 12 },
@@ -195,6 +214,25 @@ test("aggregateResults uses team rows for kills and placement", () => {
   assert.equal(teamKills.get("t2"), 8);
   assert.equal(teamPosition.get("t1"), 1);
   assert.equal(teamPosition.get("t2"), 2);
+});
+
+test("aggregateResults matches rows by team slot when provided", () => {
+  const resultRows = [
+    { slot: 12, name: "MisreadOne", kills: 4, rank: 1 },
+    { slot: 12, name: "MisreadTwo", kills: 3, rank: 1 },
+    { slot: 7, name: "OtherTeamGuy", kills: 5, rank: 2 },
+  ];
+  const { teamKills, teamPosition, unmatched } = aggregateResults({
+    rosterPlayers: [],
+    teams,
+    resultRows,
+  });
+
+  assert.equal(teamKills.get("t1"), 7);
+  assert.equal(teamPosition.get("t1"), 1);
+  assert.equal(teamKills.get("t2"), 5);
+  assert.equal(teamPosition.get("t2"), 2);
+  assert.equal(unmatched.length, 0);
 });
 
 test("buildComparison reconciles verified results against live scores", () => {
