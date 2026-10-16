@@ -1,6 +1,10 @@
 import { Router } from "express";
 import multer from "multer";
-import { getBranding, updateBranding } from "../controllers/system.controller.js";
+import {
+  getBranding,
+  updateBranding,
+  uploadImage,
+} from "../controllers/system.controller.js";
 import { requireAdmin } from "../middlewares/requireAdmin.middleware.js";
 
 const upload = multer({
@@ -19,6 +23,13 @@ router.put(
     { name: "favicon", maxCount: 1 },
   ]),
   updateBranding
+);
+
+router.post(
+  "/upload-image",
+  requireAdmin,
+  upload.single("image"),
+  uploadImage
 );
 
 export default router;
