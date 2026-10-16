@@ -251,6 +251,75 @@ test("aggregateResults matches rows by team slot when provided", () => {
   assert.equal(unmatched.length, 0);
 });
 
+test("aggregateResults ignores a team repeated across screenshots", () => {
+  const rosterPlayers = [
+    { name: "Pyro", teamId: "t1" },
+    { name: "Frost", teamId: "t1" },
+  ];
+  const resultRows = [
+    { imageIndex: 0, rank: 1, name: "Pyro", kills: 6 },
+    { imageIndex: 0, rank: 1, name: "Frost", kills: 4 },
+    { imageIndex: 1, rank: 1, name: "Pyro", kills: 6 },
+    { imageIndex: 1, rank: 1, name: "Frost", kills: 4 },
+  ];
+  const { teamKills, teamPosition, repeats } = aggregateResults({
+    rosterPlayers,
+    teams,
+    resultRows,
+  });
+
+  assert.equal(teamKills.get("t1"), 10);
+  assert.equal(teamPosition.get("t1"), 1);
+  assert.equal(repeats.ignored, 2);
+  assert.equal(repeats.conflicts.length, 0);
+});
+
+test("aggregateResults flags a repeated team whose value changed", () => {
+  const rosterPlayers = [
+    { name: "Pyro", teamId: "t1" },
+    { name: "Frost", teamId: "t1" },
+  ];
+  const resultRows = [
+    { imageIndex: 0, rank: 1, name: "Pyro", kills: 6 },
+    { imageIndex: 0, rank: 1, name: "Frost", kills: 4 },
+    { imageIndex: 1, rank: 2, name: "Pyro", kills: 8 },
+    { imageIndex: 1, rank: 2, name: "Frost", kills: 5 },
+  ];
+  const { teamKills, teamPosition, repeats } = aggregateResults({
+    rosterPlayers,
+    teams,
+    resultRows,
+  });
+
+  assert.equal(teamKills.get("t1"), 10);
+  assert.equal(teamPosition.get("t1"), 1);
+  assert.equal(repeats.ignored, 2);
+  const fields = repeats.conflicts.map((conflict) => conflict.field).sort();
+  assert.deepEqual(fields, ["kills", "position"]);
+});
+
+test("aggregateResults still counts a team that appears only in a later screenshot", () => {
+  const rosterPlayers = [
+    { name: "Pyro", teamId: "t1" },
+    { name: "Frost", teamId: "t1" },
+  ];
+  const resultRows = [
+    { imageIndex: 0, rank: 1, name: "Pyro", kills: 6 },
+    { imageIndex: 1, rank: 1, name: "Pyro", kills: 6 },
+    { imageIndex: 1, rank: 2, name: "BravoKings", kills: 8 },
+  ];
+  const { teamKills, teamPosition, repeats } = aggregateResults({
+    rosterPlayers,
+    teams,
+    resultRows,
+  });
+
+  assert.equal(teamKills.get("t1"), 6);
+  assert.equal(teamKills.get("t2"), 8);
+  assert.equal(teamPosition.get("t2"), 2);
+  assert.equal(repeats.ignored, 1);
+});
+
 test("buildComparison reconciles verified results against live scores", () => {
   const scoring = getScoringConfig({
     scoring: { positionPoints: { 1: 10, 2: 6, 3: 5 } },
