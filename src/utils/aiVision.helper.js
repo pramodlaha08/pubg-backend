@@ -72,9 +72,10 @@ const OPENAI_COMPATIBLE = {
   },
 };
 
-// Providers with a bespoke (non-OpenAI) API.
+// Providers with a bespoke (non-OpenAI) API. Gemini lists several models so the
+// free per-model daily quotas rotate (verified to accept vision requests).
 const NATIVE_MODELS = {
-  gemini: "gemini-3.8-flash",
+  gemini: "gemini-3.6-flash,gemini-3.5-flash-lite,gemini-flash-lite-latest",
   ollama: "llama3.2-vision",
 };
 
@@ -100,11 +101,23 @@ const keysFor = (provider) => {
 const describeKey = (key) =>
   key ? `${key.slice(0, 6)}…${key.slice(-4)}` : "local";
 
-const modelFor = (provider) =>
-  process.env[`AI_VISION_MODEL_${provider.toUpperCase()}`] ||
-  (PROVIDERS.length === 1 ? MODEL : "") ||
-  OPENAI_COMPATIBLE[provider]?.model ||
-  NATIVE_MODELS[provider];
+// A provider may list several models (comma-separated) so free daily quotas can
+// be rotated across models. Gemini free-tier limits are per model, so more
+// models means more daily head-room before falling back to Tesseract.
+const modelsFor = (provider) => {
+  const raw =
+    process.env[`AI_VISION_MODEL_${provider.toUpperCase()}`] ||
+    (PROVIDERS.length === 1 ? MODEL : "") ||
+    NATIVE_MODELS[provider] ||
+    OPENAI_COMPATIBLE[provider]?.model ||
+    "";
+  return String(raw)
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+};
+
+const modelFor = (provider) => modelsFor(provider)[0];
 
 const providerReady = (provider) => {
   if (provider === "cloudflare") {
@@ -271,9 +284,8 @@ const withTimeout = async (url, options) => {
   }
 };
 
-const callGemini = async ({ base64, mimeType, prompt }, key) => {
+const callGemini = async ({ base64, mimeType, prompt }, key, model = modelFor("gemini")) => {
   if (!key) throw new ApiError(500, "GEMINI_API_KEY is not set");
-  const model = modelFor("gemini");
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
   const res = await withTimeout(url, {
     method: "POST",
@@ -335,9 +347,8 @@ const callOpenAiCompatible = async (
   return data?.choices?.[0]?.message?.content || "";
 };
 
-const callOllama = async ({ base64, prompt }) => {
+const callOllama = async ({ base64, prompt }, model = modelFor("ollama")) => {
   const host = process.env.OLLAMA_HOST || "http://127.0.0.1:11434";
-  const model = modelFor("ollama");
   const res = await withTimeout(`${host}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -353,9 +364,9 @@ const callOllama = async ({ base64, prompt }) => {
   return data?.message?.content || "";
 };
 
-const callProvider = (provider, { base64, mimeType, prompt }, key) => {
-  if (provider === "gemini") return callGemini({ base64, mimeType, prompt }, key);
-  if (provider === "ollama") return callOllama({ base64, prompt });
+const callProvider = (provider, { base64, mimeType, prompt }, key, model) => {
+  if (provider === "gemini") return callGemini({ base64, mimeType, prompt }, key, model);
+  if (provider === "ollama") return callOllama({ base64, prompt }, model);
 
   const cfg = OPENAI_COMPATIBLE[provider];
   if (!cfg) throw new ApiError(500, `Unknown AI vision provider: ${provider}`);
@@ -365,7 +376,7 @@ const callProvider = (provider, { base64, mimeType, prompt }, key) => {
     url,
     key,
     { base64, mimeType, prompt },
-    modelFor(provider),
+    model || modelFor(provider),
     cfg.extra || {}
   );
 };
@@ -424,55 +435,64 @@ const cooldownUntil = {};
 
 const tryProvider = async ({ provider, base64, mimeType, prompt, kind, maxRetries }) => {
   const keys = keysFor(provider);
-  if (!keys.length) return null;
-  let allKeysExhausted = false;
+  const models = modelsFor(provider);
+  if (!keys.length || !models.length) return null;
+
+  let exhausted = false;
 
   for (const key of keys) {
     let keyUsable = true;
-    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-      try {
-        const text = await callProvider(provider, { base64, mimeType, prompt }, key);
-        const entries = parseAiPlayers(text, kind);
-        if (!entries.length) return null;
-        return { entries, raw: text, engine: `ai:${provider}` };
-      } catch (error) {
-        const message = error?.message || "";
-        // 503 "high demand" is transient, so treat it like a rate limit.
-        const retryable =
-          error?.statusCode === 429 ||
-          error?.statusCode === 503 ||
-          /rate_limit|429|UNAVAILABLE|high demand/i.test(message);
-        const authError = error?.statusCode === 401 || error?.statusCode === 403;
-
-        if (isDailyQuotaError(message)) {
-          // This key is spent for the day; move on to the next key.
-          allKeysExhausted = true;
-          keyUsable = false;
-          console.error(
-            `[aiVision] ${provider} key ${describeKey(key)} hit its daily quota; rotating`
+    for (const model of models) {
+      for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+        try {
+          const text = await callProvider(
+            provider,
+            { base64, mimeType, prompt },
+            key,
+            model
           );
+          const entries = parseAiPlayers(text, kind);
+          if (!entries.length) return null;
+          return { entries, raw: text, engine: `ai:${provider}` };
+        } catch (error) {
+          const message = error?.message || "";
+          // 503 "high demand" is transient, so treat it like a rate limit.
+          const retryable =
+            error?.statusCode === 429 ||
+            error?.statusCode === 503 ||
+            /rate_limit|429|UNAVAILABLE|high demand/i.test(message);
+          const authError = error?.statusCode === 401 || error?.statusCode === 403;
+
+          if (isDailyQuotaError(message)) {
+            // Usually a per-model limit (Gemini), so try the next model with
+            // the same key before giving up on the provider.
+            exhausted = true;
+            console.error(
+              `[aiVision] ${provider} ${model} key ${describeKey(key)} hit its daily quota; rotating`
+            );
+            break;
+          }
+          if (authError) {
+            keyUsable = false;
+            console.error(`[aiVision] ${provider} key ${describeKey(key)} rejected; rotating`);
+            break;
+          }
+          if (retryable && attempt < maxRetries) {
+            await sleep(retryDelayMs(error, attempt));
+            continue;
+          }
+          console.error(`[aiVision] ${provider} ${model} extraction failed:`, message);
           break;
         }
-        if (authError) {
-          keyUsable = false;
-          console.error(`[aiVision] ${provider} key ${describeKey(key)} rejected; rotating`);
-          break;
-        }
-        if (retryable && attempt < maxRetries) {
-          await sleep(retryDelayMs(error, attempt));
-          continue;
-        }
-        console.error(`[aiVision] ${provider} extraction failed:`, message);
-        return null;
       }
+      if (!keyUsable) break;
     }
-    if (keyUsable) return null;
   }
 
-  if (allKeysExhausted) {
+  if (exhausted) {
     cooldownUntil[provider] = Date.now() + QUOTA_COOLDOWN_MS;
     console.error(
-      `[aiVision] ${provider} out of daily quota on all keys; skipping it for ${Math.round(
+      `[aiVision] ${provider} out of daily quota on all keys/models; skipping it for ${Math.round(
         QUOTA_COOLDOWN_MS / 1000
       )}s`
     );
