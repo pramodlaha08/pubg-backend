@@ -133,6 +133,22 @@ test("matchPlayers: exact, fuzzy, ambiguous and unmatched", () => {
   assert.equal(result[3].teamId, null);
 });
 
+test("matchPlayers: matches by panel team name when the slot is missing", () => {
+  const entries = [
+    { slot: null, name: "SomePlayer", teamName: "Alpha Squad" },
+    { slot: null, name: "AnotherGuy", teamName: "Bravo Kings" },
+  ];
+  const result = matchPlayers(entries, teams);
+
+  assert.equal(result[0].status, "matched");
+  assert.equal(result[0].teamId, "t1");
+  assert.equal(result[0].source, "team");
+
+  assert.equal(result[1].status, "matched");
+  assert.equal(result[1].teamId, "t2");
+  assert.equal(result[1].source, "team");
+});
+
 test("aggregateResults sums individual eliminations into team kills", () => {
   const rosterPlayers = [
     { name: "PlayerOne", teamId: "t1" },

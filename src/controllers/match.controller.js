@@ -91,7 +91,11 @@ const readLobby = async (file) => {
   if (ai) {
     return {
       rawText: ai.raw,
-      entries: ai.entries.map((entry) => ({ slot: entry.slot, name: entry.name })),
+      entries: ai.entries.map((entry) => ({
+        slot: entry.slot,
+        name: entry.name,
+        teamName: entry.teamName,
+      })),
       engine: ai.engine,
       confidence: null,
       psm: null,

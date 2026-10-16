@@ -19,7 +19,8 @@ test("buildVisionPrompt embeds the strict JSON shape and rules", () => {
 
 test("buildVisionPrompt uses the compact lobby tuple shape", () => {
   const prompt = buildVisionPrompt("lobby");
-  assert.match(prompt, /\[\["name",slot\]\]/);
+  assert.match(prompt, /\[\["name",slot,"teamName"\]\]/);
+  assert.match(prompt, /LARGE, COLORED team slot number/i);
 });
 
 test("buildVisionPrompt lists known teams and players for results", () => {
@@ -110,6 +111,18 @@ test("parseAiPlayers reads the team-aware results tuple form", () => {
     { name: "Alpha", slot: null, kills: 10, rank: 1, teamName: "DZx" },
     { name: "Bravo", slot: null, kills: 0, rank: 1, teamName: "DZx" },
     { name: "Charlie", slot: null, kills: 3, rank: 2, teamName: "RDx" },
+  ]);
+});
+
+test("parseAiPlayers reads the team-aware lobby tuple form", () => {
+  const players = parseAiPlayers(
+    '{"players":[["Alpha",10,"DZx"],["Bravo",10,"DZx"],["Charlie",null,"RDx"]]}',
+    "lobby"
+  );
+  assert.deepEqual(players, [
+    { name: "Alpha", slot: 10, kills: null, rank: null, teamName: "DZx" },
+    { name: "Bravo", slot: 10, kills: null, rank: null, teamName: "DZx" },
+    { name: "Charlie", slot: null, kills: null, rank: null, teamName: "RDx" },
   ]);
 });
 
