@@ -45,6 +45,20 @@ const resolveBrandingImage = async (file, folder) => {
 
 const isTrue = (value) => value === true || value === "true" || value === "1";
 
+// POST /api/v1/system/upload-image  (admin, multipart: image, folder?)
+export const uploadImage = asyncHandler(async (req, res) => {
+  const file = req.file;
+  if (!file) {
+    throw new ApiError(400, "No image uploaded");
+  }
+  const folder =
+    typeof req.body?.folder === "string" && req.body.folder.trim()
+      ? `overlay/${req.body.folder.trim().replace(/[^a-z0-9/_-]/gi, "").slice(0, 40)}`
+      : "overlay";
+  const url = await resolveBrandingImage(file, folder);
+  res.status(200).json(new ApiResponse(200, { url }, "Image uploaded"));
+});
+
 // GET /api/v1/system/branding  (public)
 export const getBranding = asyncHandler(async (req, res) => {
   const settings = await getOrCreateSettings();
