@@ -15,6 +15,7 @@ import {
   flushEliminationRecords,
 } from "../utils/eliminationRealtime.helper.js";
 import { getScoringConfig, recomputeTeamScores } from "../utils/scoring.helper.js";
+import { markAbsentTeams } from "../utils/rosterParser.helper.js";
 import mongoose from "mongoose";
 
 const DEFAULT_TEAM_LOGO = process.env.DEFAULT_TEAM_LOGO || "/placeholder.svg";
@@ -887,12 +888,28 @@ const handleElimination = asyncHandler(async (req, res) => {
 
 // Get All Teams
 const getAllTeams = asyncHandler(async (req, res) => {
-  const teams = await Team.find({ tournamentId: req.tournamentId }).sort({
-    totalPoints: -1,
-  });
+  const [teams, rosters] = await Promise.all([
+    Team.find({ tournamentId: req.tournamentId })
+      .sort({ totalPoints: -1 })
+      .lean(),
+    // Most recent rounds first. The latest round that actually holds a
+    // registration (a player assigned to a team) decides who is still in the
+    // tournament; an empty roster must never hide the whole field.
+    MatchRoster.find({ tournamentId: req.tournamentId })
+      .sort({ roundNumber: -1 })
+      .select({ roundNumber: 1, "players.teamId": 1 })
+      .lean(),
+  ]);
+
+  const activeRoster = rosters.find((roster) =>
+    (roster.players || []).some((player) => player.teamId)
+  );
+
+  const data = markAbsentTeams(teams, activeRoster?.players ?? null);
+
   return res
     .status(200)
-    .json(new ApiResponse(200, teams, "Teams retrieved successfully"));
+    .json(new ApiResponse(200, data, "Teams retrieved successfully"));
 });
 
 // Delete Team

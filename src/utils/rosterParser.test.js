@@ -19,6 +19,8 @@ import {
   buildResultsMapping,
   mergeRosterEntries,
   snapNamesToRoster,
+  collectPresentTeamIds,
+  markAbsentTeams,
   decideApply,
 } from "./rosterParser.helper.js";
 import { getScoringConfig } from "./scoring.helper.js";
@@ -448,6 +450,45 @@ test("snapNamesToRoster corrects a misread player name to the roster spelling", 
   assert.equal(rows[0].originalName, "Aayush77T");
   assert.equal(rows[0].rosterCorrected, true);
   assert.equal(rows[0].kills, 4);
+});
+
+test("collectPresentTeamIds lists every team that has a registered player", () => {
+  const present = collectPresentTeamIds([
+    { name: "A", teamId: "t1" },
+    { name: "B", teamId: null },
+    { name: "C", teamId: "t1" },
+    { name: "D", teamId: "t2" },
+  ]);
+  assert.deepEqual([...present].sort(), ["t1", "t2"]);
+});
+
+test("markAbsentTeams hides only teams missing from a usable registration", () => {
+  const teams = [{ _id: "t1" }, { _id: "t2" }, { _id: "t3" }];
+  const marked = markAbsentTeams(teams, [
+    { name: "A", teamId: "t1" },
+    { name: "B", teamId: "t1" },
+  ]);
+  assert.equal(marked.find((t) => t._id === "t1").absent, false);
+  assert.equal(marked.find((t) => t._id === "t2").absent, true);
+  assert.equal(marked.find((t) => t._id === "t3").absent, true);
+});
+
+test("markAbsentTeams hides nobody when there is no usable registration", () => {
+  const teams = [{ _id: "t1" }, { _id: "t2" }];
+
+  // No roster at all.
+  assert.deepEqual(
+    markAbsentTeams(teams, null).map((t) => t.absent),
+    [false, false]
+  );
+
+  // Roster exists but no player is assigned to any team yet.
+  assert.deepEqual(
+    markAbsentTeams(teams, [{ name: "A", teamId: null }]).map(
+      (t) => t.absent
+    ),
+    [false, false]
+  );
 });
 
 test("snapNamesToRoster snaps a team summary row to the team, not a player", () => {

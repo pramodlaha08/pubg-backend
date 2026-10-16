@@ -211,14 +211,31 @@ export const uploadLobby = asyncHandler(async (req, res) => {
   const rawText = rawTexts.join("\n");
   const confidence = average(confidences);
 
-  // Merge with the saved roster so previously confirmed mappings survive a re-upload.
+  // Merge with the saved roster so previously confirmed mappings survive a
+  // re-upload. When the round has no registration yet, carry the previous
+  // round's roster forward: most players stay the same between rounds, so the
+  // admin only reviews the changes instead of re-registering everyone.
   let existing = [];
+  let carriedFrom = null;
   if (roundNumber) {
     const roster = await MatchRoster.findOne({
       tournamentId: req.tournamentId,
       roundNumber,
     }).lean();
-    existing = roster?.players || [];
+    if (roster?.players?.length) {
+      existing = roster.players;
+    } else {
+      const previous = await MatchRoster.findOne({
+        tournamentId: req.tournamentId,
+        roundNumber: { $lt: roundNumber },
+      })
+        .sort({ roundNumber: -1 })
+        .lean();
+      if (previous?.players?.length) {
+        existing = previous.players;
+        carriedFrom = previous.roundNumber;
+      }
+    }
   }
   const entries = mergeRosterEntries(existing, merged);
 
@@ -257,6 +274,7 @@ export const uploadLobby = asyncHandler(async (req, res) => {
         perImage,
         rawText,
         entries,
+        carriedFrom,
         teams: teams.map(summarizeTeam),
         mapping: buildMapping(entries, teams),
         duplicates,
@@ -341,14 +359,33 @@ export const saveRoster = asyncHandler(async (req, res) => {
 // GET /api/v1/match/roster?roundNumber=N
 export const getRoster = asyncHandler(async (req, res) => {
   const roundNumber = parseRoundNumber(req.query?.roundNumber);
-  const roster = await MatchRoster.findOne({
-    tournamentId: req.tournamentId,
-    roundNumber,
-  }).lean();
+  const [roster, previous] = await Promise.all([
+    MatchRoster.findOne({
+      tournamentId: req.tournamentId,
+      roundNumber,
+    }).lean(),
+    // The closest earlier round, so the register screen can carry a roster
+    // forward when this round has not been registered yet.
+    MatchRoster.findOne({
+      tournamentId: req.tournamentId,
+      roundNumber: { $lt: roundNumber },
+    })
+      .sort({ roundNumber: -1 })
+      .lean(),
+  ]);
 
-  return res
-    .status(200)
-    .json(new ApiResponse(200, { roster: roster || null }, "Roster fetched"));
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        roster: roster || null,
+        previous: previous
+          ? { roundNumber: previous.roundNumber, players: previous.players }
+          : null,
+      },
+      "Roster fetched"
+    )
+  );
 });
 
 // POST /api/v1/match/results  (multipart: images[], body: roundNumber)

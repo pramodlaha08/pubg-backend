@@ -632,6 +632,34 @@ export const mergeRosterEntries = (existingPlayers = [], ocrEntries = []) => {
 };
 
 // ---------------------------------------------------------------------------
+// Round participation (which teams are registered for a round)
+// ---------------------------------------------------------------------------
+
+// Ids of every team that has at least one player in a roster.
+export const collectPresentTeamIds = (rosterPlayers = []) => {
+  const present = new Set();
+  for (const player of rosterPlayers || []) {
+    if (player?.teamId) present.add(String(player.teamId));
+  }
+  return present;
+};
+
+// Mark teams missing from a round's registration. A team counts as absent when
+// the round HAS a usable registration (at least one player assigned to a team)
+// and the team has no player in it. When there is no usable registration nobody
+// is marked absent, so a missing or partial screenshot can never empty the
+// live control / points table. Teams come back automatically once they appear in
+// a later round's registration.
+export const markAbsentTeams = (teams = [], rosterPlayers = null) => {
+  const present = rosterPlayers ? collectPresentTeamIds(rosterPlayers) : null;
+  const active = Boolean(present && present.size);
+  return teams.map((team) => ({
+    ...team,
+    absent: active ? !present.has(String(team._id)) : false,
+  }));
+};
+
+// ---------------------------------------------------------------------------
 // Per-team display mappings (team -> players, team -> verified result)
 // ---------------------------------------------------------------------------
 
