@@ -1,10 +1,11 @@
 // Optional free-AI vision extraction (hybrid with Tesseract OCR).
-// Disabled by default. Set AI_VISION_PROVIDER (ollama|gemini|groq|openrouter)
-// to enable. Any failure returns null so the caller falls back to Tesseract.
+// Disabled by default. Set AI_VISION_PROVIDER to a comma-separated fallback
+// chain (e.g. "groq,gemini,zai") to enable. Any failure returns null so the
+// caller falls back to Tesseract.
 import { ApiError } from "./ApiError.js";
 
 // AI_VISION_PROVIDER may be a single provider or a comma-separated fallback
-// chain, e.g. "gemini,groq". The first provider that has credentials and a
+// chain, e.g. "groq,gemini". The first provider that has credentials and a
 // working quota wins; otherwise the caller falls back to Tesseract OCR.
 const PROVIDERS = String(process.env.AI_VISION_PROVIDER || "off")
   .split(",")
@@ -13,26 +14,79 @@ const PROVIDERS = String(process.env.AI_VISION_PROVIDER || "off")
 const MODEL = String(process.env.AI_VISION_MODEL || "").trim();
 const TIMEOUT_MS = Number(process.env.AI_VISION_TIMEOUT_MS || 30000);
 
-const DEFAULT_MODELS = {
+// OpenAI-compatible chat-completions vision endpoints. Adding any of these is
+// just a matter of setting the API-key env var and listing the provider in
+// AI_VISION_PROVIDER — every entry accepts the same body shape.
+//   - groq, openrouter : already used
+//   - zai (Zhipu GLM)  : glm-4.6v-flash is permanently free, no card
+//   - mistral          : pixtral vision on the free tier
+//   - nvidia           : build.nvidia.com hosts Llama 3.2 vision
+//   - github           : GitHub Models (GPT-4o family) with a GitHub token
+//   - cloudflare       : Workers AI Llama 3.2 vision (needs account id)
+const OPENAI_COMPATIBLE = {
+  groq: {
+    url: "https://api.groq.com/openai/v1/chat/completions",
+    keyEnv: "GROQ_API_KEY",
+    model: "qwen/qwen3.8-27b",
+    extra: {
+      reasoning_effort: process.env.GROQ_REASONING_EFFORT || "none",
+      response_format: { type: "json_object" },
+    },
+  },
+  openrouter: {
+    url: "https://openrouter.ai/api/v1/chat/completions",
+    keyEnv: "OPENROUTER_API_KEY",
+    model: "google/gemma-4-31b-it:free",
+  },
+  zai: {
+    url: "https://api.z.ai/api/paas/v4/chat/completions",
+    keyEnv: "ZAI_API_KEY",
+    model: "glm-4.6v-flash",
+  },
+  meta: {
+    url: "https://api.llama.com/compat/v1/chat/completions",
+    keyEnv: "META_API_KEY",
+    model: "Llama-4-Scout-17B-16E-Instruct",
+  },
+  mistral: {
+    url: "https://api.mistral.ai/v1/chat/completions",
+    keyEnv: "MISTRAL_API_KEY",
+    model: "pixtral-12b-2409",
+  },
+  nvidia: {
+    url: "https://integrate.api.nvidia.com/v1/chat/completions",
+    keyEnv: "NVIDIA_API_KEY",
+    model: "meta/llama-3.2-11b-vision-instruct",
+  },
+  github: {
+    url: "https://models.inference.ai.azure.com/chat/completions",
+    keyEnv: "GITHUB_MODELS_TOKEN",
+    model: "gpt-4o-mini",
+  },
+  cloudflare: {
+    keyEnv: "CLOUDFLARE_API_TOKEN",
+    accountEnv: "CLOUDFLARE_ACCOUNT_ID",
+    model: "@cf/meta/llama-3.2-11b-vision-instruct",
+    url: (accountId) =>
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`,
+  },
+};
+
+// Providers with a bespoke (non-OpenAI) API.
+const NATIVE_MODELS = {
   gemini: "gemini-3.8-flash",
-  groq: "qwen/qwen3.8-27b",
-  openrouter: "meta-llama/llama-3.2-11b-vision-instruct:free",
   ollama: "llama3.2-vision",
 };
 
-const modelFor = (provider) =>
-  process.env[`AI_VISION_MODEL_${provider.toUpperCase()}`] ||
-  (PROVIDERS.length === 1 ? MODEL : "") ||
-  DEFAULT_MODELS[provider];
+const KEY_ENV = {
+  gemini: "GEMINI_API_KEY",
+  ...Object.fromEntries(
+    Object.entries(OPENAI_COMPATIBLE).map(([name, cfg]) => [name, cfg.keyEnv])
+  ),
+};
 
 // API keys may be a comma-separated list per provider so several free-tier
 // accounts can be rotated before a daily quota forces a fallback.
-const KEY_ENV = {
-  gemini: "GEMINI_API_KEY",
-  groq: "GROQ_API_KEY",
-  openrouter: "OPENROUTER_API_KEY",
-};
-
 const keysFor = (provider) => {
   if (provider === "ollama") return [null];
   const envName = KEY_ENV[provider];
@@ -46,7 +100,20 @@ const keysFor = (provider) => {
 const describeKey = (key) =>
   key ? `${key.slice(0, 6)}…${key.slice(-4)}` : "local";
 
-const providerReady = (provider) => keysFor(provider).length > 0;
+const modelFor = (provider) =>
+  process.env[`AI_VISION_MODEL_${provider.toUpperCase()}`] ||
+  (PROVIDERS.length === 1 ? MODEL : "") ||
+  OPENAI_COMPATIBLE[provider]?.model ||
+  NATIVE_MODELS[provider];
+
+const providerReady = (provider) => {
+  if (provider === "cloudflare") {
+    return (
+      keysFor(provider).length > 0 && Boolean(process.env.CLOUDFLARE_ACCOUNT_ID)
+    );
+  }
+  return keysFor(provider).length > 0;
+};
 
 export const isAiVisionEnabled = () =>
   PROVIDERS.some((provider) => providerReady(provider));
@@ -94,13 +161,16 @@ export const buildVisionPrompt = (kind, context = {}) => {
   }
 
   return [
-    `You are an esports data extractor. The image is a PUBG Mobile / BGMI live scoreboard or in-game lobby / player register screenshot. It shows team panels arranged in a grid of several columns; each panel has a colored team slot number, a team name, and up to four player rows.`,
+    `You are an esports data extractor. The image is a PUBG Mobile / BGMI live scoreboard or in-game lobby / player register screenshot. It shows team panels arranged in a grid of several columns; each panel has a LARGE, brightly-colored team slot number, a team name, and up to four player rows.`,
     `Return ONLY strict JSON, no markdown, no explanation, using this exact shape:`,
-    `{"players":[["name",slot]]}`,
+    `{"players":[["name",slot,"teamName"]]}`,
     `Rules:`,
+    `- Each panel header shows a LARGE, COLORED team slot number (a big digit sitting on the team's colored bar or badge, e.g. 1-25), usually the biggest text in the panel. Read that number carefully — it is the team's slot. The exact same slot number repeats for every player of that team.`,
     `- Output ONE row for EVERY individual PLAYER you can read, including every teammate. Never collapse a team to a single player: if a team shows 4 players, emit 4 rows.`,
     `- First item is the player name exactly as shown (keep any clan tags). Do NOT output team names as rows and do NOT skip players that share a team.`,
-    `- Second item is the NUMERIC team slot that player belongs to; every player of the same team repeats the same slot number.`,
+    `- Second item is the NUMERIC team slot that player belongs to; every player of the same team repeats the same slot number. If the big colored slot digit is unreadable, use null but still fill teamName.`,
+    `- Third item is the team name shown in that same panel header, copied EXACTLY as written (keep clan tags), repeated on every row of the team. Use null only if the team name is genuinely unreadable.`,
+    `- If the screen shows a total team or player count, use it to make sure you did not miss any panel.`,
     `- Preserve the exact reading order (top-to-bottom down each column, then the next column).`,
     `- Never invent players. If a value is unreadable or not present, use null.`,
     `- Output compact JSON only (no spaces or newlines needed).`,
@@ -169,14 +239,14 @@ export const parseAiPlayers = (payload, kind = "lobby") => {
             teamName: null,
           };
         }
-        // Lobby shape: [name, slot].
-        const [name, slot] = player;
+        // Lobby shape: [name, slot] or [name, slot, teamName].
+        const [name, slot, teamName] = player;
         return {
           name: String(name ?? "").replace(/\s+/g, " ").trim(),
           slot: toIntOrNull(slot),
           kills: null,
           rank: null,
-          teamName: null,
+          teamName: teamName ? String(teamName).replace(/\s+/g, " ").trim() : null,
         };
       }
       // Verbose object form (kept for backward compatibility).
@@ -284,32 +354,20 @@ const callOllama = async ({ base64, prompt }) => {
 };
 
 const callProvider = (provider, { base64, mimeType, prompt }, key) => {
-  switch (provider) {
-    case "gemini":
-      return callGemini({ base64, mimeType, prompt }, key);
-    case "groq":
-      return callOpenAiCompatible(
-        "https://api.groq.com/openai/v1/chat/completions",
-        key,
-        { base64, mimeType, prompt },
-        modelFor("groq"),
-        {
-          reasoning_effort: process.env.GROQ_REASONING_EFFORT || "none",
-          response_format: { type: "json_object" },
-        }
-      );
-    case "openrouter":
-      return callOpenAiCompatible(
-        "https://openrouter.ai/api/v1/chat/completions",
-        key,
-        { base64, mimeType, prompt },
-        modelFor("openrouter")
-      );
-    case "ollama":
-      return callOllama({ base64, prompt });
-    default:
-      throw new ApiError(500, `Unknown AI vision provider: ${provider}`);
-  }
+  if (provider === "gemini") return callGemini({ base64, mimeType, prompt }, key);
+  if (provider === "ollama") return callOllama({ base64, prompt });
+
+  const cfg = OPENAI_COMPATIBLE[provider];
+  if (!cfg) throw new ApiError(500, `Unknown AI vision provider: ${provider}`);
+  const url =
+    typeof cfg.url === "function" ? cfg.url(process.env[cfg.accountEnv]) : cfg.url;
+  return callOpenAiCompatible(
+    url,
+    key,
+    { base64, mimeType, prompt },
+    modelFor(provider),
+    cfg.extra || {}
+  );
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

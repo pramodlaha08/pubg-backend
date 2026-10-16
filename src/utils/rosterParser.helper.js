@@ -265,6 +265,12 @@ export const matchPlayers = (entries, teams, aliases = new Map()) => {
     const slotTeam =
       entry.slot != null ? teams.find((t) => t.slot === entry.slot) : null;
 
+    // The AI can also read the team name printed in each panel header, which is
+    // a reliable fallback when the large colored slot digit is misread.
+    const teamNameHit = entry.teamName
+      ? rankCandidates(entry.teamName, teams)[0]
+      : null;
+
     let status = "unmatched";
     let teamId = null;
     let confidence = best?.score ?? 0;
@@ -286,6 +292,11 @@ export const matchPlayers = (entries, teams, aliases = new Map()) => {
       teamId = String(slotTeam._id);
       confidence = Math.max(confidence, 0.9);
       source = "slot";
+    } else if (teamNameHit && teamNameHit.score >= WEAK_MATCH) {
+      status = "matched";
+      teamId = String(teamNameHit.item._id);
+      confidence = Math.max(confidence, teamNameHit.score);
+      source = "team";
     } else if (best && best.score >= WEAK_MATCH) {
       status = "ambiguous";
       teamId = best.teamId;
