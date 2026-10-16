@@ -373,6 +373,15 @@ export const aggregateResults = ({ rosterPlayers = [], teams = [], resultRows = 
   const teamPosition = new Map();
   const unmatched = [];
 
+  // A results screenshot repeats the leading placements in every image (the
+  // 1st/2nd team is usually pinned in all shots). Track the first image each
+  // team appears in so later copies are ignored instead of counted twice.
+  const teamFirstImage = new Map();
+  const repeatPlayerKills = new Map();
+  const repeatTeamKills = new Map();
+  const repeatPosition = new Map();
+  let repeatsIgnored = 0;
+
   // The scoreboard shows each panel's team slot explicitly, so matching by slot
   // is exact and far more reliable than fuzzy name matching.
   const slotToTeam = new Map();
@@ -435,6 +444,31 @@ export const aggregateResults = ({ rosterPlayers = [], teams = [], resultRows = 
       continue;
     }
 
+    // Ignore a team that already appeared in an earlier screenshot: keep the
+    // first reading (as a cross-check) but never add its kills/rank twice.
+    if (row.imageIndex != null) {
+      const firstImage = teamFirstImage.get(teamId);
+      if (firstImage == null) {
+        teamFirstImage.set(teamId, row.imageIndex);
+      } else if (row.imageIndex > firstImage) {
+        repeatsIgnored += 1;
+        if (row.rank != null && !repeatPosition.has(teamId)) {
+          repeatPosition.set(teamId, row.rank);
+        }
+        if (row.kills != null) {
+          if (isPlayerRow) {
+            repeatPlayerKills.set(
+              teamId,
+              (repeatPlayerKills.get(teamId) || 0) + row.kills
+            );
+          } else {
+            repeatTeamKills.set(teamId, row.kills);
+          }
+        }
+        continue;
+      }
+    }
+
     // Rank on either row type is the TEAM's placement (all teammates share it).
     if (row.rank != null && !teamPosition.has(teamId)) {
       teamPosition.set(teamId, row.rank);
@@ -459,7 +493,44 @@ export const aggregateResults = ({ rosterPlayers = [], teams = [], resultRows = 
     );
   }
 
-  return { teamKills, teamPosition, unmatched };
+  // Surface teams whose repeat reading disagreed with the kept one so the admin
+  // can eyeball them. Kills are only flagged when the repeat read MORE (a likely
+  // missed player row); positions are exact, so any mismatch is worth noting.
+  const teamNameById = new Map(teams.map((team) => [String(team._id), team.name]));
+  const conflicts = [];
+  for (const [teamId, seen] of repeatPosition) {
+    const kept = teamPosition.has(teamId) ? teamPosition.get(teamId) : null;
+    if (kept != null && seen != null && kept !== seen) {
+      conflicts.push({
+        teamId,
+        teamName: teamNameById.get(String(teamId)) || null,
+        field: "position",
+        kept,
+        seen,
+      });
+    }
+  }
+  for (const seenMap of [repeatPlayerKills, repeatTeamKills]) {
+    for (const [teamId, seen] of seenMap) {
+      const kept = teamKills.has(teamId) ? teamKills.get(teamId) : null;
+      if (kept != null && seen > kept) {
+        conflicts.push({
+          teamId,
+          teamName: teamNameById.get(String(teamId)) || null,
+          field: "kills",
+          kept,
+          seen,
+        });
+      }
+    }
+  }
+
+  return {
+    teamKills,
+    teamPosition,
+    unmatched,
+    repeats: { ignored: repeatsIgnored, conflicts },
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -558,6 +629,34 @@ export const mergeRosterEntries = (existingPlayers = [], ocrEntries = []) => {
   }
 
   return out;
+};
+
+// ---------------------------------------------------------------------------
+// Round participation (which teams are registered for a round)
+// ---------------------------------------------------------------------------
+
+// Ids of every team that has at least one player in a roster.
+export const collectPresentTeamIds = (rosterPlayers = []) => {
+  const present = new Set();
+  for (const player of rosterPlayers || []) {
+    if (player?.teamId) present.add(String(player.teamId));
+  }
+  return present;
+};
+
+// Mark teams missing from a round's registration. A team counts as absent when
+// the round HAS a usable registration (at least one player assigned to a team)
+// and the team has no player in it. When there is no usable registration nobody
+// is marked absent, so a missing or partial screenshot can never empty the
+// live control / points table. Teams come back automatically once they appear in
+// a later round's registration.
+export const markAbsentTeams = (teams = [], rosterPlayers = null) => {
+  const present = rosterPlayers ? collectPresentTeamIds(rosterPlayers) : null;
+  const active = Boolean(present && present.size);
+  return teams.map((team) => ({
+    ...team,
+    absent: active ? !present.has(String(team._id)) : false,
+  }));
 };
 
 // ---------------------------------------------------------------------------

@@ -211,14 +211,31 @@ export const uploadLobby = asyncHandler(async (req, res) => {
   const rawText = rawTexts.join("\n");
   const confidence = average(confidences);
 
-  // Merge with the saved roster so previously confirmed mappings survive a re-upload.
+  // Merge with the saved roster so previously confirmed mappings survive a
+  // re-upload. When the round has no registration yet, carry the previous
+  // round's roster forward: most players stay the same between rounds, so the
+  // admin only reviews the changes instead of re-registering everyone.
   let existing = [];
+  let carriedFrom = null;
   if (roundNumber) {
     const roster = await MatchRoster.findOne({
       tournamentId: req.tournamentId,
       roundNumber,
     }).lean();
-    existing = roster?.players || [];
+    if (roster?.players?.length) {
+      existing = roster.players;
+    } else {
+      const previous = await MatchRoster.findOne({
+        tournamentId: req.tournamentId,
+        roundNumber: { $lt: roundNumber },
+      })
+        .sort({ roundNumber: -1 })
+        .lean();
+      if (previous?.players?.length) {
+        existing = previous.players;
+        carriedFrom = previous.roundNumber;
+      }
+    }
   }
   const entries = mergeRosterEntries(existing, merged);
 
@@ -257,6 +274,7 @@ export const uploadLobby = asyncHandler(async (req, res) => {
         perImage,
         rawText,
         entries,
+        carriedFrom,
         teams: teams.map(summarizeTeam),
         mapping: buildMapping(entries, teams),
         duplicates,
@@ -341,14 +359,33 @@ export const saveRoster = asyncHandler(async (req, res) => {
 // GET /api/v1/match/roster?roundNumber=N
 export const getRoster = asyncHandler(async (req, res) => {
   const roundNumber = parseRoundNumber(req.query?.roundNumber);
-  const roster = await MatchRoster.findOne({
-    tournamentId: req.tournamentId,
-    roundNumber,
-  }).lean();
+  const [roster, previous] = await Promise.all([
+    MatchRoster.findOne({
+      tournamentId: req.tournamentId,
+      roundNumber,
+    }).lean(),
+    // The closest earlier round, so the register screen can carry a roster
+    // forward when this round has not been registered yet.
+    MatchRoster.findOne({
+      tournamentId: req.tournamentId,
+      roundNumber: { $lt: roundNumber },
+    })
+      .sort({ roundNumber: -1 })
+      .lean(),
+  ]);
 
-  return res
-    .status(200)
-    .json(new ApiResponse(200, { roster: roster || null }, "Roster fetched"));
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        roster: roster || null,
+        previous: previous
+          ? { roundNumber: previous.roundNumber, players: previous.players }
+          : null,
+      },
+      "Roster fetched"
+    )
+  );
 });
 
 // POST /api/v1/match/results  (multipart: images[], body: roundNumber)
@@ -391,7 +428,8 @@ export const uploadResults = asyncHandler(async (req, res) => {
   const perImage = [];
   const rawRows = [];
 
-  for (const file of files) {
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
     const hash = hashBuffer(file.buffer);
     hashes.push(hash);
 
@@ -401,7 +439,10 @@ export const uploadResults = asyncHandler(async (req, res) => {
     if (parsed.rawText) rawTexts.push(parsed.rawText);
 
     perImage.push({ imageHash: hash, count: parsed.rows.length, engine: parsed.engine });
-    for (const row of parsed.rows) rawRows.push(row);
+    // Tag every row with its source image. The results screen pins the leading
+    // placements in every screenshot, so the same team/players repeat across
+    // images -- the tag lets us read each one once and ignore the copies.
+    for (const row of parsed.rows) rawRows.push({ ...row, imageIndex: index });
   }
 
   // Snap misread names to the known roster/teams, then de-duplicate.
@@ -411,20 +452,40 @@ export const uploadResults = asyncHandler(async (req, res) => {
     knownTeams
   );
 
-  const seenKey = new Set();
+  // A results screenshot repeats the leading placements in every image, so the
+  // same player can show up several times. Keep the first reading only and use
+  // the repeats purely as a cross-check -- never add the kills/rank twice.
+  const seenKey = new Map();
   const resultRows = [];
+  const duplicates = { ignored: 0, conflicts: [] };
   for (const row of snappedRows) {
     const key = canonicalName(row.name) || normalizeName(row.name);
-    if (!key || seenKey.has(key)) continue;
-    seenKey.add(key);
-    resultRows.push(row);
+    if (!key) continue;
+    const kept = seenKey.get(key);
+    if (!kept) {
+      seenKey.set(key, row);
+      resultRows.push(row);
+      continue;
+    }
+    duplicates.ignored += 1;
+    const killsDiffer = row.kills != null && kept.kills != null && row.kills !== kept.kills;
+    const rankDiffer = row.rank != null && kept.rank != null && row.rank !== kept.rank;
+    if (killsDiffer || rankDiffer) {
+      duplicates.conflicts.push({
+        name: kept.name,
+        keptKills: kept.kills ?? null,
+        seenKills: row.kills ?? null,
+        keptRank: kept.rank ?? null,
+        seenRank: row.rank ?? null,
+      });
+    }
   }
 
   const imageHash = combineHashes(hashes);
   const rawText = rawTexts.join("\n");
   const confidence = average(confidences);
 
-  const { teamKills, teamPosition, unmatched } = aggregateResults({
+  const { teamKills, teamPosition, unmatched, repeats } = aggregateResults({
     rosterPlayers,
     teams,
     resultRows,
@@ -480,6 +541,16 @@ export const uploadResults = asyncHandler(async (req, res) => {
     confidence,
     engine: engineLabel,
   });
+  const repeatLabels = [
+    ...duplicates.conflicts.map((conflict) => conflict.name),
+    ...repeats.conflicts.map((conflict) => conflict.teamName || "Unnamed team"),
+  ];
+  if (repeatLabels.length) {
+    const names = [...new Set(repeatLabels)].slice(0, 5);
+    warnings.push(
+      `${repeatLabels.length} repeated reading(s) across the screenshots disagreed with the first; the first was kept. Double-check: ${names.join(", ")}.`
+    );
+  }
   if (!roster) {
     warnings.push(
       `No saved roster for round ${roundNumber}. Rows can only be matched by team name — save a lobby roster first for the best accuracy.`
@@ -505,6 +576,8 @@ export const uploadResults = asyncHandler(async (req, res) => {
           engine: engineLabel,
           images: files.length,
           corrected,
+          duplicates,
+          repeats,
         },
       },
       "Results screenshot(s) processed"

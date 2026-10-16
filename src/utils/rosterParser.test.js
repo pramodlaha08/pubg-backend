@@ -19,6 +19,8 @@ import {
   buildResultsMapping,
   mergeRosterEntries,
   snapNamesToRoster,
+  collectPresentTeamIds,
+  markAbsentTeams,
   decideApply,
 } from "./rosterParser.helper.js";
 import { getScoringConfig } from "./scoring.helper.js";
@@ -251,6 +253,75 @@ test("aggregateResults matches rows by team slot when provided", () => {
   assert.equal(unmatched.length, 0);
 });
 
+test("aggregateResults ignores a team repeated across screenshots", () => {
+  const rosterPlayers = [
+    { name: "Pyro", teamId: "t1" },
+    { name: "Frost", teamId: "t1" },
+  ];
+  const resultRows = [
+    { imageIndex: 0, rank: 1, name: "Pyro", kills: 6 },
+    { imageIndex: 0, rank: 1, name: "Frost", kills: 4 },
+    { imageIndex: 1, rank: 1, name: "Pyro", kills: 6 },
+    { imageIndex: 1, rank: 1, name: "Frost", kills: 4 },
+  ];
+  const { teamKills, teamPosition, repeats } = aggregateResults({
+    rosterPlayers,
+    teams,
+    resultRows,
+  });
+
+  assert.equal(teamKills.get("t1"), 10);
+  assert.equal(teamPosition.get("t1"), 1);
+  assert.equal(repeats.ignored, 2);
+  assert.equal(repeats.conflicts.length, 0);
+});
+
+test("aggregateResults flags a repeated team whose value changed", () => {
+  const rosterPlayers = [
+    { name: "Pyro", teamId: "t1" },
+    { name: "Frost", teamId: "t1" },
+  ];
+  const resultRows = [
+    { imageIndex: 0, rank: 1, name: "Pyro", kills: 6 },
+    { imageIndex: 0, rank: 1, name: "Frost", kills: 4 },
+    { imageIndex: 1, rank: 2, name: "Pyro", kills: 8 },
+    { imageIndex: 1, rank: 2, name: "Frost", kills: 5 },
+  ];
+  const { teamKills, teamPosition, repeats } = aggregateResults({
+    rosterPlayers,
+    teams,
+    resultRows,
+  });
+
+  assert.equal(teamKills.get("t1"), 10);
+  assert.equal(teamPosition.get("t1"), 1);
+  assert.equal(repeats.ignored, 2);
+  const fields = repeats.conflicts.map((conflict) => conflict.field).sort();
+  assert.deepEqual(fields, ["kills", "position"]);
+});
+
+test("aggregateResults still counts a team that appears only in a later screenshot", () => {
+  const rosterPlayers = [
+    { name: "Pyro", teamId: "t1" },
+    { name: "Frost", teamId: "t1" },
+  ];
+  const resultRows = [
+    { imageIndex: 0, rank: 1, name: "Pyro", kills: 6 },
+    { imageIndex: 1, rank: 1, name: "Pyro", kills: 6 },
+    { imageIndex: 1, rank: 2, name: "BravoKings", kills: 8 },
+  ];
+  const { teamKills, teamPosition, repeats } = aggregateResults({
+    rosterPlayers,
+    teams,
+    resultRows,
+  });
+
+  assert.equal(teamKills.get("t1"), 6);
+  assert.equal(teamKills.get("t2"), 8);
+  assert.equal(teamPosition.get("t2"), 2);
+  assert.equal(repeats.ignored, 1);
+});
+
 test("buildComparison reconciles verified results against live scores", () => {
   const scoring = getScoringConfig({
     scoring: { positionPoints: { 1: 10, 2: 6, 3: 5 } },
@@ -379,6 +450,45 @@ test("snapNamesToRoster corrects a misread player name to the roster spelling", 
   assert.equal(rows[0].originalName, "Aayush77T");
   assert.equal(rows[0].rosterCorrected, true);
   assert.equal(rows[0].kills, 4);
+});
+
+test("collectPresentTeamIds lists every team that has a registered player", () => {
+  const present = collectPresentTeamIds([
+    { name: "A", teamId: "t1" },
+    { name: "B", teamId: null },
+    { name: "C", teamId: "t1" },
+    { name: "D", teamId: "t2" },
+  ]);
+  assert.deepEqual([...present].sort(), ["t1", "t2"]);
+});
+
+test("markAbsentTeams hides only teams missing from a usable registration", () => {
+  const teams = [{ _id: "t1" }, { _id: "t2" }, { _id: "t3" }];
+  const marked = markAbsentTeams(teams, [
+    { name: "A", teamId: "t1" },
+    { name: "B", teamId: "t1" },
+  ]);
+  assert.equal(marked.find((t) => t._id === "t1").absent, false);
+  assert.equal(marked.find((t) => t._id === "t2").absent, true);
+  assert.equal(marked.find((t) => t._id === "t3").absent, true);
+});
+
+test("markAbsentTeams hides nobody when there is no usable registration", () => {
+  const teams = [{ _id: "t1" }, { _id: "t2" }];
+
+  // No roster at all.
+  assert.deepEqual(
+    markAbsentTeams(teams, null).map((t) => t.absent),
+    [false, false]
+  );
+
+  // Roster exists but no player is assigned to any team yet.
+  assert.deepEqual(
+    markAbsentTeams(teams, [{ name: "A", teamId: null }]).map(
+      (t) => t.absent
+    ),
+    [false, false]
+  );
 });
 
 test("snapNamesToRoster snaps a team summary row to the team, not a player", () => {
