@@ -17,7 +17,7 @@ export const seedAdmin = async () => {
   if (!existing) {
     const password = providedPassword || randomPassword();
     const passwordHash = await bcrypt.hash(password, 10);
-    await Admin.create({ username, passwordHash });
+    await Admin.create({ username, passwordHash, role: "admin" });
 
     console.log("======================================================");
     console.log("[Seed] Created initial admin account");
@@ -30,6 +30,16 @@ export const seedAdmin = async () => {
     }
     console.log("======================================================");
     return;
+  }
+
+  // Accounts created before roles existed have no stored role. Mongoose fills
+  // in the schema default ("viewer") when hydrating, so read the raw document
+  // with .lean() to detect the actually-missing field and grant admin.
+  const raw = await Admin.findOne({ username }).lean();
+  if (!raw?.role) {
+    existing.role = "admin";
+    await existing.save();
+    console.log(`[Seed] Assigned role "admin" to existing account "${username}"`);
   }
 
   if (providedPassword) {
