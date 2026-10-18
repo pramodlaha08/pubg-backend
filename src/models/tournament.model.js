@@ -11,6 +11,9 @@ const scoringSchema = new mongoose.Schema(
     },
     killPointMultiplier: { type: Number, default: 1, min: 0 },
     fullEliminationCount: { type: Number, default: 4, min: 1, max: 4 },
+    // Position-first scoring: when false, eliminations are ignored entirely and
+    // only team placement awards points. Kill reading/entry is skipped too.
+    trackKills: { type: Boolean, default: false },
   },
   { _id: false }
 );

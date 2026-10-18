@@ -33,6 +33,7 @@ const summarizeScoring = (scoring) => {
     positionPoints: toPlainPositionPoints(scoring.positionPoints),
     killPointMultiplier: scoring.killPointMultiplier ?? 1,
     fullEliminationCount: scoring.fullEliminationCount ?? 4,
+    trackKills: scoring.trackKills ?? false,
   };
 };
 
@@ -211,6 +212,9 @@ export const updateTournament = asyncHandler(async (req, res) => {
         throw new ApiError(400, "fullEliminationCount must be between 1 and 4");
       }
       tournament.scoring.fullEliminationCount = count;
+    }
+    if (scoring.trackKills !== undefined) {
+      tournament.scoring.trackKills = Boolean(scoring.trackKills);
     }
   }
 

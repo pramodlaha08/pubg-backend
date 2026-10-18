@@ -118,6 +118,7 @@ const readResults = async (file, context = {}) => {
     kind: "results",
     knownPlayers: context.knownPlayers,
     knownTeams: context.knownTeams,
+    trackKills: context.trackKills,
   });
   if (ai) {
     return {
@@ -419,7 +420,8 @@ export const uploadResults = asyncHandler(async (req, res) => {
     teamName: player.teamId ? teamNameById.get(String(player.teamId)) ?? "" : "",
   }));
   const knownTeams = teams.map((team) => team.name);
-  const aiContext = { knownPlayers, knownTeams };
+  const scoring = getScoringConfig(req.tournament);
+  const aiContext = { knownPlayers, knownTeams, trackKills: scoring.trackKills };
 
   const hashes = [];
   const rawTexts = [];
@@ -491,6 +493,12 @@ export const uploadResults = asyncHandler(async (req, res) => {
     resultRows,
   });
 
+  // Position-first events ignore eliminations entirely: drop any kills the
+  // reader produced so the comparison/preview only ever reconcile placement.
+  if (!scoring.trackKills) {
+    teamKills.clear();
+  }
+
   // Include every registered team, not only those already scored this round: the
   // results screenshot is usually the first source of scores for the round, so
   // filtering to existing rounds would leave the comparison empty and the admin
@@ -525,7 +533,6 @@ export const uploadResults = asyncHandler(async (req, res) => {
     }
   }
 
-  const scoring = getScoringConfig(req.tournament);
   const comparison = buildComparison({
     teams: comparisonTeams,
     teamKills,
@@ -599,7 +606,18 @@ export const previewResults = asyncHandler(async (req, res) => {
     .lean();
   const scoring = getScoringConfig(req.tournament);
 
-  const preview = previewPointsImpact({ teams, roundNumber, verified, scoring });
+  // Position-first events reconcile placement only; strip any kill values so
+  // the preview cannot show or apply elimination changes.
+  const verifiedEntries = scoring.trackKills
+    ? verified
+    : verified.map((entry) => ({ ...entry, kills: null }));
+
+  const preview = previewPointsImpact({
+    teams,
+    roundNumber,
+    verified: verifiedEntries,
+    scoring,
+  });
 
   return res
     .status(200)
@@ -633,10 +651,15 @@ export const applyResults = asyncHandler(async (req, res) => {
   const bySlot = new Map(teams.map((team) => [team.slot, team]));
   const scoring = getScoringConfig(req.tournament);
 
+  // Position-first events only ever write placement; never touch kills.
+  const verifiedEntries = scoring.trackKills
+    ? verified
+    : verified.map((entry) => ({ ...entry, kills: null }));
+
   const updated = [];
   const skipped = [];
 
-  for (const entry of verified) {
+  for (const entry of verifiedEntries) {
     const slot = Number(entry?.slot);
     const team = bySlot.get(slot);
     if (!team) {
@@ -677,9 +700,13 @@ export const applyResults = asyncHandler(async (req, res) => {
       team,
       roundNumber,
       title: `Verified: ${team.name}`,
-      message: `Round ${roundNumber}: kills set to ${round.kills}, position set to ${round.position} from results screenshot. Team total now ${team.totalPoints} pts.`,
+      message: scoring.trackKills
+        ? `Round ${roundNumber}: kills set to ${round.kills}, position set to ${round.position} from results screenshot. Team total now ${team.totalPoints} pts.`
+        : `Round ${roundNumber}: position set to ${round.position} from results screenshot. Team total now ${team.totalPoints} pts.`,
       changes: [
-        { field: "round.kills", current: round.kills },
+        ...(scoring.trackKills
+          ? [{ field: "round.kills", current: round.kills }]
+          : []),
         { field: "round.position", current: round.position },
         { field: "team.totalPoints", current: team.totalPoints },
       ],
@@ -693,7 +720,7 @@ export const applyResults = asyncHandler(async (req, res) => {
       $set: {
         roundNumber,
         rawText: rawText || "",
-        verified: verified.map((entry) => ({
+        verified: verifiedEntries.map((entry) => ({
           slot: Number(entry.slot),
           teamId: entry.teamId || null,
           kills: entry.kills ?? null,

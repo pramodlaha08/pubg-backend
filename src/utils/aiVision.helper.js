@@ -135,20 +135,39 @@ export const buildVisionPrompt = (kind, context = {}) => {
   const { knownPlayers = [], knownTeams = [] } = context;
 
   if (kind === "results") {
-    const lines = [
-      `You are an esports data extractor. The image is a PUBG Mobile / BGMI post-match results / live scoreboard screen. It shows team blocks. Each block header has a team identifier (a colored slot/registration number and/or a TEAM NAME) and the team's final placement; inside are up to four player rows, each with a player name and that player's elimination count (e.g. "3 eliminations", "/0 Eliminations").`,
-      `Return ONLY strict JSON, no markdown, no explanation, using this exact shape:`,
-      `{"players":[["name",kills,rank,"teamName"]]}`,
-      `Rules:`,
-      `- Output ONE row for EVERY player in EVERY team block (all teammates, all blocks). Never collapse a team to a single player.`,
-      `- name: the player name exactly as shown (keep any clan tags). Never output a team name as a player.`,
-      `- kills: that player's eliminations (the number shown next to their name; use 0 when it shows "0 eliminations").`,
-      `- rank: the team's FINAL PLACEMENT (1 = winner). If a placement number is shown next to the block, use it; otherwise the blocks are ordered by placement, so assign 1 to the first (top) block and increase in reading order. Every row of the same block shares the same rank.`,
-      `- teamName: the TEAM NAME shown in that block's header, copied EXACTLY as written (keep clan tags). Repeat the same teamName on every row of that block. This is required — it is how rows are matched to teams.`,
-      `- If a block shows only a team total (no per-player numbers), output ONE row using the team name as "name" and that total as kills.`,
-      `- Never invent players or teams. Use null only for genuinely unreadable values.`,
-      `- Output compact JSON only (no spaces or newlines needed).`,
-    ];
+    // Position-first events do not score eliminations, so skip reading kill
+    // numbers entirely — it avoids kill misreads and keeps the prompt focused.
+    const includeKills = context.trackKills !== false;
+
+    const lines = includeKills
+      ? [
+          `You are an esports data extractor. The image is a PUBG Mobile / BGMI post-match results / live scoreboard screen. It shows team blocks. Each block header has a team identifier (a colored slot/registration number and/or a TEAM NAME) and the team's final placement; inside are up to four player rows, each with a player name and that player's elimination count (e.g. "3 eliminations", "/0 Eliminations").`,
+          `Return ONLY strict JSON, no markdown, no explanation, using this exact shape:`,
+          `{"players":[["name",kills,rank,"teamName"]]}`,
+          `Rules:`,
+          `- Output ONE row for EVERY player in EVERY team block (all teammates, all blocks). Never collapse a team to a single player.`,
+          `- name: the player name exactly as shown (keep any clan tags). Never output a team name as a player.`,
+          `- kills: that player's eliminations (the number shown next to their name; use 0 when it shows "0 eliminations").`,
+          `- rank: the team's FINAL PLACEMENT (1 = winner). If a placement number is shown next to the block, use it; otherwise the blocks are ordered by placement, so assign 1 to the first (top) block and increase in reading order. Every row of the same block shares the same rank.`,
+          `- teamName: the TEAM NAME shown in that block's header, copied EXACTLY as written (keep clan tags). Repeat the same teamName on every row of that block. This is required — it is how rows are matched to teams.`,
+          `- If a block shows only a team total (no per-player numbers), output ONE row using the team name as "name" and that total as kills.`,
+          `- Never invent players or teams. Use null only for genuinely unreadable values.`,
+          `- Output compact JSON only (no spaces or newlines needed).`,
+        ]
+      : [
+          `You are an esports data extractor. The image is a PUBG Mobile / BGMI post-match results / live scoreboard screen. It shows team blocks. Each block header has a team identifier (a colored slot/registration number and/or a TEAM NAME) and the team's final placement; inside are up to four player rows with player names. This event scores PLACEMENT ONLY — do NOT read or report elimination/kill numbers.`,
+          `Return ONLY strict JSON, no markdown, no explanation, using this exact shape:`,
+          `{"players":[["name",kills,rank,"teamName"]]}`,
+          `Rules:`,
+          `- Output ONE row for EVERY player in EVERY team block (all teammates, all blocks). Never collapse a team to a single player.`,
+          `- name: the player name exactly as shown (keep any clan tags). Never output a team name as a player.`,
+          `- kills: always output 0 — eliminations are not scored or tracked for this event.`,
+          `- rank: the team's FINAL PLACEMENT (1 = winner). If a placement number is shown next to the block, use it; otherwise the blocks are ordered by placement, so assign 1 to the first (top) block and increase in reading order. Every row of the same block shares the same rank.`,
+          `- teamName: the TEAM NAME shown in that block's header, copied EXACTLY as written (keep clan tags). Repeat the same teamName on every row of that block. This is required — it is how rows are matched to teams.`,
+          `- If a block shows only a team summary, output ONE row using the team name as "name" and 0 as kills.`,
+          `- Never invent players or teams. Use null only for genuinely unreadable values.`,
+          `- Output compact JSON only (no spaces or newlines needed).`,
+        ];
 
     // Reference lists cost input tokens (counted against free-tier daily
     // quotas), so cap them — fuzzy name matching still covers the rest.
@@ -528,10 +547,11 @@ export const extractPlayersWithAI = async ({
   kind = "lobby",
   knownPlayers = [],
   knownTeams = [],
+  trackKills = true,
 }) => {
   if (!isAiVisionEnabled() || !buffer) return null;
   const prepared = await prepareImage(buffer, mimeType);
-  const prompt = buildVisionPrompt(kind, { knownPlayers, knownTeams });
+  const prompt = buildVisionPrompt(kind, { knownPlayers, knownTeams, trackKills });
   const maxRetries = Number(process.env.AI_VISION_RETRIES || 4);
 
   return pacedCall(async () => {
