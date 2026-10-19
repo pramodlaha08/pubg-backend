@@ -12,7 +12,7 @@ const signToken = (admin) => {
     throw new ApiError(500, "Server auth is not configured (JWT_SECRET missing)");
   }
   return jwt.sign(
-    { id: admin._id.toString(), username: admin.username },
+    { id: admin._id.toString(), username: admin.username, role: admin.role },
     process.env.JWT_SECRET,
     { expiresIn: TOKEN_TTL }
   );
@@ -35,6 +35,10 @@ export const login = asyncHandler(async (req, res) => {
     throw new ApiError(401, "Invalid credentials");
   }
 
+  if (admin.isActive === false) {
+    throw new ApiError(403, "This account has been deactivated");
+  }
+
   const token = signToken(admin);
 
   res.status(200).json(
@@ -42,7 +46,7 @@ export const login = asyncHandler(async (req, res) => {
       200,
       {
         token,
-        admin: { id: admin._id, username: admin.username },
+        admin: { id: admin._id, username: admin.username, role: admin.role },
       },
       "Logged in successfully"
     )
@@ -51,7 +55,11 @@ export const login = asyncHandler(async (req, res) => {
 
 export const me = asyncHandler(async (req, res) => {
   res.status(200).json(
-    new ApiResponse(200, { id: req.admin._id, username: req.admin.username }, "Admin session")
+    new ApiResponse(
+      200,
+      { id: req.admin._id, username: req.admin.username, role: req.admin.role },
+      "Admin session"
+    )
   );
 });
 

@@ -660,6 +660,8 @@ const addKill = asyncHandler(async (req, res) => {
     ],
   });
 
+  broadcast(req, "team_updated", team);
+
   return res
     .status(200)
     .json(new ApiResponse(200, team, "Kill added successfully"));
@@ -734,6 +736,8 @@ const decreaseKill = asyncHandler(async (req, res) => {
       noChange: oldKills === currentRound.kills,
     },
   });
+
+  broadcast(req, "team_updated", team);
 
   return res
     .status(200)
@@ -872,6 +876,8 @@ const handleElimination = asyncHandler(async (req, res) => {
       ],
     });
   }
+
+  broadcast(req, "team_updated", team);
 
   return res
     .status(200)

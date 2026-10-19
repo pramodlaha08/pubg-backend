@@ -3,8 +3,7 @@
 // writing anything to the database.
 
 const roundTotal = (kills, position, scoring) =>
-  (Number(kills) || 0) * scoring.killPointMultiplier +
-  scoring.positionPointsFor(position);
+  scoring.killPointsFor(kills) + scoring.positionPointsFor(position);
 
 const teamTotal = (rounds, scoring) =>
   (rounds || []).reduce(
@@ -91,9 +90,9 @@ export const previewPointsImpact = ({ teams, roundNumber, verified, scoring }) =
       currentPosition,
       newKills,
       newPosition,
-      currentKillPoints: currentKills * scoring.killPointMultiplier,
+      currentKillPoints: scoring.killPointsFor(currentKills),
       currentPositionPoints: scoring.positionPointsFor(currentPosition),
-      newKillPoints: newKills * scoring.killPointMultiplier,
+      newKillPoints: scoring.killPointsFor(newKills),
       newPositionPoints: scoring.positionPointsFor(newPosition),
       currentTotal,
       projectedTotal,
@@ -130,6 +129,7 @@ export const previewPointsImpact = ({ teams, roundNumber, verified, scoring }) =
     skipped,
     leaderboard,
     killPointMultiplier: scoring.killPointMultiplier,
+    trackKills: Boolean(scoring.trackKills),
   };
 };
 

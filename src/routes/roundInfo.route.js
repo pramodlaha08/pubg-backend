@@ -3,11 +3,11 @@ import {
   getRoundInfo,
   setRoundInfo,
 } from "../controllers/roundInfo.controller.js";
-import { requireAdmin } from "../middlewares/requireAdmin.middleware.js";
+import { requireScorer } from "../middlewares/requireAdmin.middleware.js";
 
 const router = Router();
 
 router.get("/", getRoundInfo);
-router.put("/", requireAdmin, setRoundInfo);
+router.put("/", requireScorer, setRoundInfo);
 
 export default router;

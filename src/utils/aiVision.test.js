@@ -37,6 +37,13 @@ test("buildVisionPrompt omits reference lists when none are provided", () => {
   assert.doesNotMatch(prompt, /Reference lists/);
 });
 
+test("buildVisionPrompt drops kill reading when trackKills is off", () => {
+  const prompt = buildVisionPrompt("results", { trackKills: false });
+  assert.match(prompt, /PLACEMENT ONLY/i);
+  assert.match(prompt, /always output 0/);
+  assert.match(prompt, /"players"/);
+});
+
 test("parseAiPlayers normalizes a JSON string payload", () => {
   const raw =
     '{"players":[{"name":"Alpha Squad","slot":"12","kills":7,"rank":1}]}';
