@@ -23,6 +23,7 @@ const teamLogSchema = new mongoose.Schema(
         "TEAM_ELIMINATED",
         "TEAM_DELETED",
         "TEAM_UPDATED",
+        "LOG_REVERTED",
       ],
     },
     severity: {
@@ -83,6 +84,21 @@ const teamLogSchema = new mongoose.Schema(
     meta: {
       type: mongoose.Schema.Types.Mixed,
       default: {},
+    },
+    // Set when a scoring action is undone from the activity log, so the same
+    // entry can never be reverted twice.
+    revertedAt: {
+      type: Date,
+      default: null,
+    },
+    revertedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+      default: null,
+    },
+    revertedByName: {
+      type: String,
+      default: null,
     },
   },
   { timestamps: true }
