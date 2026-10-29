@@ -29,7 +29,7 @@ const COLOR_KEYS = [
   "notificationTo",
 ];
 
-const COLUMN_KEYS = ["logo", "alive", "pts", "elims"];
+const COLUMN_KEYS = ["logo", "alive", "place", "pts", "elims"];
 const NOTIFICATION_BOOLEANS = [
   "showLogo",
   "showKills",

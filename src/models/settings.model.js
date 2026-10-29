@@ -32,6 +32,7 @@ const pointsTableColumnsSchema = new mongoose.Schema(
   {
     logo: { type: Boolean, default: true },
     alive: { type: Boolean, default: true },
+    place: { type: Boolean, default: true },
     pts: { type: Boolean, default: true },
     elims: { type: Boolean, default: true },
   },
