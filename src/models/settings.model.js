@@ -32,6 +32,7 @@ const pointsTableColumnsSchema = new mongoose.Schema(
   {
     logo: { type: Boolean, default: true },
     alive: { type: Boolean, default: true },
+    place: { type: Boolean, default: true },
     pts: { type: Boolean, default: true },
     elims: { type: Boolean, default: true },
   },
@@ -61,6 +62,16 @@ const SURFACE_STYLES = [
   "transparent",
   "none",
 ];
+const ENTRANCE_ANIMATIONS = [
+  "fade-up",
+  "fade",
+  "slide-left",
+  "slide-right",
+  "scale",
+  "flip",
+  "none",
+];
+const AMBIENT_EFFECTS = ["float-shine", "float", "shine", "pulse"];
 const VERTICAL_ANCHORS = ["top", "middle", "bottom"];
 const HORIZONTAL_ANCHORS = ["left", "center", "right"];
 const WATERMARK_CORNERS = [
@@ -90,6 +101,18 @@ const overlaySurfaceSchema = new mongoose.Schema(
     shadow: { type: Boolean, default: true },
     scanline: { type: Boolean, default: false },
     animate: { type: Boolean, default: true },
+    entrance: {
+      type: String,
+      enum: ENTRANCE_ANIMATIONS,
+      default: "fade-up",
+    },
+    entranceDuration: { type: Number, default: 420, min: 100, max: 2000 },
+    stagger: { type: Number, default: 30, min: 0, max: 300 },
+    ambient: {
+      type: String,
+      enum: AMBIENT_EFFECTS,
+      default: "float-shine",
+    },
     backgroundImage: { type: String, default: "" },
     backgroundImageOpacity: { type: Number, default: 0.25, min: 0, max: 1 },
     backgroundImageBlur: { type: Number, default: 0, min: 0, max: 40 },

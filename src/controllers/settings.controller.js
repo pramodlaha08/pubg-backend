@@ -29,7 +29,7 @@ const COLOR_KEYS = [
   "notificationTo",
 ];
 
-const COLUMN_KEYS = ["logo", "alive", "pts", "elims"];
+const COLUMN_KEYS = ["logo", "alive", "place", "pts", "elims"];
 const NOTIFICATION_BOOLEANS = [
   "showLogo",
   "showKills",
@@ -68,6 +68,16 @@ const SURFACE_STYLES = [
   "transparent",
   "none",
 ];
+const ENTRANCE_ANIMATIONS = [
+  "fade-up",
+  "fade",
+  "slide-left",
+  "slide-right",
+  "scale",
+  "flip",
+  "none",
+];
+const AMBIENT_EFFECTS = ["float-shine", "float", "shine", "pulse"];
 const VERTICAL_ANCHORS = ["top", "middle", "bottom"];
 const HORIZONTAL_ANCHORS = ["left", "center", "right"];
 const WATERMARK_CORNERS = [
@@ -147,6 +157,27 @@ const applySurface = (next, source) => {
   }
   for (const key of ["shadow", "scanline", "animate"]) {
     if (typeof source[key] === "boolean") next.surface[key] = source[key];
+  }
+  if (ENTRANCE_ANIMATIONS.includes(source.entrance)) {
+    next.surface.entrance = source.entrance;
+  }
+  if (AMBIENT_EFFECTS.includes(source.ambient)) {
+    next.surface.ambient = source.ambient;
+  }
+  if (source.entranceDuration !== undefined) {
+    next.surface.entranceDuration = Math.round(
+      clampNumber(
+        source.entranceDuration,
+        100,
+        2000,
+        next.surface.entranceDuration
+      )
+    );
+  }
+  if (source.stagger !== undefined) {
+    next.surface.stagger = Math.round(
+      clampNumber(source.stagger, 0, 300, next.surface.stagger)
+    );
   }
   const bg = safeImage(source.backgroundImage);
   if (bg !== undefined) next.surface.backgroundImage = bg;
