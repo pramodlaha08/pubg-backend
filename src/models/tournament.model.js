@@ -34,6 +34,7 @@ const broadcastOverlaysSchema = new mongoose.Schema(
   {
     pointsTable: { type: Boolean, default: true },
     leaderboard: { type: Boolean, default: true },
+    killFeed: { type: Boolean, default: true },
   },
   { _id: false }
 );
@@ -60,11 +61,26 @@ const countdownSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const winnerSchema = new mongoose.Schema(
+  {
+    visible: { type: Boolean, default: false },
+    teamId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Team",
+      default: null,
+    },
+    title: { type: String, default: "CHAMPIONS", trim: true, maxlength: 60 },
+    subtitle: { type: String, default: "", trim: true, maxlength: 100 },
+  },
+  { _id: false }
+);
+
 const broadcastSchema = new mongoose.Schema(
   {
     overlays: { type: broadcastOverlaysSchema, default: () => ({}) },
     lowerThird: { type: lowerThirdSchema, default: () => ({}) },
     countdown: { type: countdownSchema, default: () => ({}) },
+    winner: { type: winnerSchema, default: () => ({}) },
   },
   { _id: false }
 );
