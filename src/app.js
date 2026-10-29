@@ -38,6 +38,7 @@ import matchRoutes from "./routes/match.route.js";
 import roundInfoRoutes from "./routes/roundInfo.route.js";
 import systemRoutes from "./routes/system.route.js";
 import adminRoutes from "./routes/admin.route.js";
+import broadcastRoutes from "./routes/broadcast.route.js";
 import { resolveTournament } from "./middlewares/resolveTournament.middleware.js";
 
 app.use("/api/v1/auth", authRoutes);
@@ -45,6 +46,7 @@ app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/tournaments", tournamentRoutes);
 app.use("/api/v1/system", systemRoutes);
 app.use("/api/v1/settings", resolveTournament, settingsRoutes);
+app.use("/api/v1/broadcast", resolveTournament, broadcastRoutes);
 app.use("/api/v1/dashboard", resolveTournament, dashboardRoutes);
 app.use("/api/v1/team", resolveTournament, teamRoutes);
 app.use("/api/v1/match", resolveTournament, matchRoutes);

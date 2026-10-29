@@ -28,6 +28,47 @@ const metaSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// Live broadcast state driven by the control room. Overlay pages poll/subscribe
+// and hide themselves when their toggle is off, so OBS sources can stay loaded.
+const broadcastOverlaysSchema = new mongoose.Schema(
+  {
+    pointsTable: { type: Boolean, default: true },
+    leaderboard: { type: Boolean, default: true },
+  },
+  { _id: false }
+);
+
+const lowerThirdSchema = new mongoose.Schema(
+  {
+    visible: { type: Boolean, default: false },
+    title: { type: String, default: "", trim: true, maxlength: 80 },
+    subtitle: { type: String, default: "", trim: true, maxlength: 120 },
+  },
+  { _id: false }
+);
+
+const countdownSchema = new mongoose.Schema(
+  {
+    visible: { type: Boolean, default: false },
+    running: { type: Boolean, default: false },
+    title: { type: String, default: "Starting in", trim: true, maxlength: 60 },
+    durationSeconds: { type: Number, default: 300, min: 10, max: 86400 },
+    remainingSeconds: { type: Number, default: 300, min: 0, max: 86400 },
+    // Set while running so every overlay renders the same wall-clock target.
+    endsAt: { type: Date, default: null },
+  },
+  { _id: false }
+);
+
+const broadcastSchema = new mongoose.Schema(
+  {
+    overlays: { type: broadcastOverlaysSchema, default: () => ({}) },
+    lowerThird: { type: lowerThirdSchema, default: () => ({}) },
+    countdown: { type: countdownSchema, default: () => ({}) },
+  },
+  { _id: false }
+);
+
 const tournamentSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true, maxlength: 80 },
@@ -41,6 +82,7 @@ const tournamentSchema = new mongoose.Schema(
     isArchived: { type: Boolean, default: false },
     design: { type: pointsTableSchema, default: () => ({}) },
     scoring: { type: scoringSchema, default: () => ({}) },
+    broadcast: { type: broadcastSchema, default: () => ({}) },
     meta: { type: metaSchema, default: () => ({}) },
   },
   { timestamps: true }
