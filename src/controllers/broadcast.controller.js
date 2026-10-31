@@ -1,4 +1,6 @@
+import mongoose from "mongoose";
 import { Tournament } from "../models/tournament.model.js";
+import { Team } from "../models/team.model.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { ApiError } from "../utils/ApiError.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -30,6 +32,7 @@ export const serializeBroadcast = (tournament) => {
   const overlays = broadcast.overlays || {};
   const lowerThird = broadcast.lowerThird || {};
   const countdown = broadcast.countdown || {};
+  const winner = broadcast.winner || {};
   const now = Date.now();
 
   return {
@@ -38,6 +41,7 @@ export const serializeBroadcast = (tournament) => {
     overlays: {
       pointsTable: overlays.pointsTable !== false,
       leaderboard: overlays.leaderboard !== false,
+      killFeed: overlays.killFeed !== false,
     },
     lowerThird: {
       visible: Boolean(lowerThird.visible),
@@ -54,6 +58,12 @@ export const serializeBroadcast = (tournament) => {
         countdown.running && countdown.endsAt
           ? new Date(countdown.endsAt).toISOString()
           : null,
+    },
+    winner: {
+      visible: Boolean(winner.visible),
+      teamId: winner.teamId ? String(winner.teamId) : null,
+      title: winner.title || "CHAMPIONS",
+      subtitle: winner.subtitle || "",
     },
   };
 };
@@ -82,9 +92,10 @@ export const updateBroadcast = asyncHandler(async (req, res) => {
   if (!broadcast.overlays) broadcast.overlays = {};
   if (!broadcast.lowerThird) broadcast.lowerThird = {};
   if (!broadcast.countdown) broadcast.countdown = {};
+  if (!broadcast.winner) broadcast.winner = {};
 
   if (body.overlays && typeof body.overlays === "object") {
-    for (const key of ["pointsTable", "leaderboard"]) {
+    for (const key of ["pointsTable", "leaderboard", "killFeed"]) {
       if (typeof body.overlays[key] === "boolean") {
         broadcast.overlays[key] = body.overlays[key];
       }
@@ -102,6 +113,38 @@ export const updateBroadcast = asyncHandler(async (req, res) => {
     if (subtitle !== undefined) broadcast.lowerThird.subtitle = subtitle;
     if (broadcast.lowerThird.visible && !broadcast.lowerThird.title) {
       throw new ApiError(400, "Lower third needs a title before showing");
+    }
+  }
+
+  if (body.winner && typeof body.winner === "object") {
+    const source = body.winner;
+    if (typeof source.visible === "boolean") {
+      broadcast.winner.visible = source.visible;
+    }
+    const title = trimmed(source.title, 60);
+    if (title !== undefined) broadcast.winner.title = title;
+    const subtitle = trimmed(source.subtitle, 100);
+    if (subtitle !== undefined) broadcast.winner.subtitle = subtitle;
+    if (source.teamId !== undefined) {
+      if (source.teamId === null || source.teamId === "") {
+        broadcast.winner.teamId = null;
+      } else if (!mongoose.isValidObjectId(source.teamId)) {
+        throw new ApiError(400, "Invalid winning team");
+      } else {
+        const team = await Team.findOne({
+          _id: source.teamId,
+          tournamentId: tournament._id,
+        })
+          .select("_id")
+          .lean();
+        if (!team) {
+          throw new ApiError(404, "Winning team not found");
+        }
+        broadcast.winner.teamId = team._id;
+      }
+    }
+    if (broadcast.winner.visible && !broadcast.winner.teamId) {
+      throw new ApiError(400, "Pick the winning team before showing");
     }
   }
 
