@@ -1,5 +1,6 @@
 // Team Controller
 import { Team } from "../models/team.model.js";
+import { Tournament } from "../models/tournament.model.js";
 import { EliminationNotification } from "../models/eliminationNotification.model.js";
 import { TeamLog } from "../models/teamLog.model.js";
 import { MatchRoster } from "../models/matchRoster.model.js";
@@ -16,6 +17,7 @@ import {
 } from "../utils/eliminationRealtime.helper.js";
 import { getScoringConfig, recomputeTeamScores } from "../utils/scoring.helper.js";
 import { markAbsentTeams } from "../utils/rosterParser.helper.js";
+import { syncAutoWinner } from "../utils/autoWinner.helper.js";
 import mongoose from "mongoose";
 
 const DEFAULT_TEAM_LOGO = process.env.DEFAULT_TEAM_LOGO || "/placeholder.svg";
@@ -33,6 +35,47 @@ const safeCreateTeamLog = async (payload) => {
   } catch (error) {
     console.error("Failed to create team log:", error.message);
   }
+};
+
+// Scoring requests may target an explicit round. When omitted we use the
+// tournament's live round, falling back to the team's latest round for legacy
+// tournaments that have not picked one yet.
+const resolveRoundNumber = (team, requested, activeRound = 0) => {
+  if (requested === undefined || requested === null || requested === "") {
+    return Number(activeRound) > 0 ? Number(activeRound) : team.currentRound;
+  }
+  const roundNumber = Number(requested);
+  if (!Number.isInteger(roundNumber) || roundNumber < 1) {
+    throw new ApiError(400, "Round number must be a positive integer");
+  }
+  return roundNumber;
+};
+
+const findTeamRound = (team, roundNumber) => {
+  const round = team.rounds.find((item) => item.roundNumber === roundNumber);
+  if (!round) {
+    throw new ApiError(
+      400,
+      `Round ${roundNumber} has not been created for ${team.name}`
+    );
+  }
+  return round;
+};
+
+const latestCreatedRound = async (tournamentId) => {
+  const [result] = await Team.aggregate([
+    { $match: { tournamentId: new mongoose.Types.ObjectId(tournamentId) } },
+    { $group: { _id: null, maxRound: { $max: "$currentRound" } } },
+  ]);
+  return result?.maxRound ?? 0;
+};
+
+const broadcastActiveRound = (req, activeRound, previous) => {
+  broadcast(req, "active_round_updated", {
+    tournamentId: String(req.tournamentId),
+    activeRound,
+    previous,
+  });
 };
 
 // Create Team
@@ -355,6 +398,23 @@ const createRound = asyncHandler(async (req, res) => {
 
   const updatedTeams = await Team.find({ slot: { $in: slots }, tournamentId: req.tournamentId });
 
+  // A newly created latest round becomes the live round automatically; adding
+  // an older round must not pull scoring backwards.
+  const tournament = await Tournament.findById(req.tournamentId).select(
+    "activeRound"
+  );
+  const previousActive = Number(tournament?.activeRound) || 0;
+  const latestRound = await latestCreatedRound(req.tournamentId);
+  if (
+    tournament &&
+    roundNumber >= latestRound &&
+    roundNumber > previousActive
+  ) {
+    tournament.activeRound = roundNumber;
+    await tournament.save();
+    broadcastActiveRound(req, roundNumber, previousActive);
+  }
+
   broadcast(req, "round_created", {
     roundNumber,
     teams: updatedTeams,
@@ -505,6 +565,26 @@ const deleteRoundFromTeams = asyncHandler(async (req, res) => {
     }),
   ]);
 
+  // Keep the live round valid: if it was deleted (or sat above every remaining
+  // round), move it to the latest round that still exists.
+  const maxRound = await latestCreatedRound(req.tournamentId);
+  const tournament = await Tournament.findById(req.tournamentId).select(
+    "activeRound"
+  );
+  const previousActive = Number(tournament?.activeRound) || 0;
+  if (
+    tournament &&
+    (previousActive === 0 ||
+      previousActive === roundNumber ||
+      previousActive > maxRound)
+  ) {
+    if (maxRound !== previousActive) {
+      tournament.activeRound = maxRound;
+      await tournament.save();
+      broadcastActiveRound(req, maxRound, previousActive);
+    }
+  }
+
   broadcast(req, "round_deleted", {
     roundNumber,
     affectedSlots: slots,
@@ -522,6 +602,54 @@ const deleteRoundFromTeams = asyncHandler(async (req, res) => {
     );
 });
 
+const getActiveRound = asyncHandler(async (req, res) => {
+  const tournament = await Tournament.findById(req.tournamentId).select(
+    "activeRound"
+  );
+  if (!tournament) {
+    throw new ApiError(404, "Tournament not found");
+  }
+
+  let activeRound = Number(tournament.activeRound) || 0;
+  // Older tournaments predate the field: seed it from the furthest round any
+  // team has reached so live scoring never silently lands on round 0.
+  if (activeRound === 0) {
+    const derived = await latestCreatedRound(req.tournamentId);
+    if (derived > 0) {
+      tournament.activeRound = derived;
+      await tournament.save();
+      activeRound = derived;
+    }
+  }
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, { activeRound }, "Active round retrieved"));
+});
+
+const setActiveRound = asyncHandler(async (req, res) => {
+  const roundNumber = Number(req.body?.roundNumber);
+
+  if (!Number.isInteger(roundNumber) || roundNumber < 0) {
+    throw new ApiError(400, "Round number must be zero or a positive integer");
+  }
+
+  const tournament = await Tournament.findById(req.tournamentId);
+  if (!tournament) {
+    throw new ApiError(404, "Tournament not found");
+  }
+
+  const previous = Number(tournament.activeRound) || 0;
+  tournament.activeRound = roundNumber;
+  await tournament.save();
+
+  broadcastActiveRound(req, roundNumber, previous);
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, { activeRound: roundNumber }, "Active round updated"));
+});
+
 // Generic Kill Update Handler
 const updateKills = asyncHandler(async (req, res) => {
   const { teamId } = req.params;
@@ -536,12 +664,12 @@ const updateKills = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Team not found");
   }
 
-  const currentRound = team.rounds.find(
-    (r) => r.roundNumber === team.currentRound
+  const roundNumber = resolveRoundNumber(
+    team,
+    req.body?.roundNumber,
+    Number(req.tournament?.activeRound) || 0
   );
-  if (!currentRound) {
-    throw new ApiError(400, "No active round found");
-  }
+  const currentRound = findTeamRound(team, roundNumber);
 
   const oldKills = currentRound.kills;
   const oldKillPoints = currentRound.killPoints;
@@ -556,7 +684,7 @@ const updateKills = asyncHandler(async (req, res) => {
 
   const template = logTemplates.killUpdated({
     team,
-    roundNumber: team.currentRound,
+    roundNumber,
     delta: kills,
     kills: currentRound.kills,
   });
@@ -566,7 +694,7 @@ const updateKills = asyncHandler(async (req, res) => {
     eventType: "KILL_UPDATED",
     severity: kills > 0 ? "highlight" : "info",
     team,
-    roundNumber: team.currentRound,
+    roundNumber,
     title: template.title,
     message: template.message,
     changes: [
@@ -605,12 +733,12 @@ const addKill = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Team not found");
   }
 
-  const currentRound = team.rounds.find(
-    (r) => r.roundNumber === team.currentRound
+  const roundNumber = resolveRoundNumber(
+    team,
+    req.body?.roundNumber,
+    Number(req.tournament?.activeRound) || 0
   );
-  if (!currentRound) {
-    throw new ApiError(400, "No active round found");
-  }
+  const currentRound = findTeamRound(team, roundNumber);
 
   const oldKills = currentRound.kills;
   const oldKillPoints = currentRound.killPoints;
@@ -625,7 +753,7 @@ const addKill = asyncHandler(async (req, res) => {
 
   const template = logTemplates.killUpdated({
     team,
-    roundNumber: team.currentRound,
+    roundNumber,
     delta: 1,
     kills: currentRound.kills,
   });
@@ -635,7 +763,7 @@ const addKill = asyncHandler(async (req, res) => {
     eventType: "KILL_ADDED",
     severity: "highlight",
     team,
-    roundNumber: team.currentRound,
+    roundNumber,
     title: template.title,
     message: template.message,
     changes: [
@@ -676,12 +804,12 @@ const decreaseKill = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Team not found");
   }
 
-  const currentRound = team.rounds.find(
-    (r) => r.roundNumber === team.currentRound
+  const roundNumber = resolveRoundNumber(
+    team,
+    req.body?.roundNumber,
+    Number(req.tournament?.activeRound) || 0
   );
-  if (!currentRound) {
-    throw new ApiError(400, "No active round found");
-  }
+  const currentRound = findTeamRound(team, roundNumber);
 
   const oldKills = currentRound.kills;
   const oldKillPoints = currentRound.killPoints;
@@ -699,7 +827,7 @@ const decreaseKill = asyncHandler(async (req, res) => {
   const killDelta = currentRound.kills - oldKills;
   const template = logTemplates.killUpdated({
     team,
-    roundNumber: team.currentRound,
+    roundNumber,
     delta: killDelta,
     kills: currentRound.kills,
   });
@@ -709,7 +837,7 @@ const decreaseKill = asyncHandler(async (req, res) => {
     eventType: "KILL_DECREASED",
     severity: "info",
     team,
-    roundNumber: team.currentRound,
+    roundNumber,
     title: template.title,
     message: template.message,
     changes: [
@@ -766,13 +894,12 @@ const handleElimination = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Team not found");
   }
 
-  const currentRound = team.rounds.find(
-    (r) => r.roundNumber === team.currentRound
+  const roundNumber = resolveRoundNumber(
+    team,
+    req.body?.roundNumber,
+    Number(req.tournament?.activeRound) || 0
   );
-
-  if (!currentRound) {
-    throw new ApiError(400, "No active round found");
-  }
+  const currentRound = findTeamRound(team, roundNumber);
 
   const playerIdx = currentRound.eliminatedPlayers.indexOf(playerIndex);
   let eliminationChange = 0;
@@ -799,8 +926,12 @@ const handleElimination = asyncHandler(async (req, res) => {
       : "alive";
 
   const oldTeamEliminated = team.isEliminated;
-  team.isEliminated =
-    currentRound.eliminationCount === scoring.fullEliminationCount;
+  // Only the team's latest round decides the live team status; editing an
+  // earlier round must not mark the team eliminated in the current one.
+  if (roundNumber === team.currentRound) {
+    team.isEliminated =
+      currentRound.eliminationCount === scoring.fullEliminationCount;
+  }
 
   await team.save();
   void syncEliminationRealtime({ req, team, round: currentRound }).catch(
@@ -811,7 +942,7 @@ const handleElimination = asyncHandler(async (req, res) => {
 
   const toggleTemplate = logTemplates.eliminationUpdated({
     team,
-    roundNumber: team.currentRound,
+    roundNumber,
     playerIndex,
     eliminationCount: currentRound.eliminationCount,
     change: eliminationChange,
@@ -823,7 +954,7 @@ const handleElimination = asyncHandler(async (req, res) => {
     eventType: "ELIMINATION_UPDATED",
     severity: eliminationChange > 0 ? "highlight" : "info",
     team,
-    roundNumber: team.currentRound,
+    roundNumber,
     title: toggleTemplate.title,
     message: toggleTemplate.message,
     changes: [
@@ -853,7 +984,7 @@ const handleElimination = asyncHandler(async (req, res) => {
   if (currentRound.eliminationCount === scoring.fullEliminationCount) {
     const eliminatedTemplate = logTemplates.teamEliminated({
       team,
-      roundNumber: team.currentRound,
+      roundNumber,
       eliminationCount: currentRound.eliminationCount,
       fullEliminationCount: scoring.fullEliminationCount,
     });
@@ -863,7 +994,7 @@ const handleElimination = asyncHandler(async (req, res) => {
       eventType: "TEAM_ELIMINATED",
       severity: "critical",
       team,
-      roundNumber: team.currentRound,
+      roundNumber,
       title: eliminatedTemplate.title,
       message: eliminatedTemplate.message,
       changes: [
@@ -875,6 +1006,12 @@ const handleElimination = asyncHandler(async (req, res) => {
         { field: "round.status", previous: oldStatus, current: "eliminated" },
       ],
     });
+  }
+
+  try {
+    await syncAutoWinner(req, roundNumber);
+  } catch (error) {
+    console.error("Failed to sync auto winner:", error.message);
   }
 
   broadcast(req, "team_updated", team);
@@ -1102,10 +1239,16 @@ const updateTeam = asyncHandler(async (req, res) => {
 
 // Update Round Positions
 const updateRoundPositions = asyncHandler(async (req, res) => {
-  const { roundNumber, slotPositions } = req.body;
+  const { slotPositions } = req.body;
+  const roundNumber =
+    Number(req.body?.roundNumber) || Number(req.tournament?.activeRound) || 0;
 
   if (!Array.isArray(slotPositions)) {
     throw new ApiError(400, "Slot positions must be an array");
+  }
+
+  if (!Number.isInteger(roundNumber) || roundNumber < 1) {
+    throw new ApiError(400, "Round number is required");
   }
 
   const teams = await Team.find({ tournamentId: req.tournamentId });
@@ -1250,4 +1393,6 @@ export {
   decreaseKill,
   deleteRoundFromTeams,
   getTeamsByRound,
+  getActiveRound,
+  setActiveRound,
 };
