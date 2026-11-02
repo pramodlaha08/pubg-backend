@@ -16,13 +16,15 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
   ]);
 
   let aliveTeams = 0;
-  let currentRound = 0;
+  // Active round is authoritative; fall back to the furthest round for legacy
+  // tournaments that predate the field.
+  let currentRound = Number(req.tournament?.activeRound) || 0;
   let totalKills = 0;
   let totalEliminations = 0;
 
   for (const team of teams) {
     if (!team.isEliminated) aliveTeams += 1;
-    if ((team.currentRound || 0) > currentRound) {
+    if (currentRound === 0 && (team.currentRound || 0) > currentRound) {
       currentRound = team.currentRound || 0;
     }
     for (const round of team.rounds || []) {

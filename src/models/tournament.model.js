@@ -44,6 +44,13 @@ const lowerThirdSchema = new mongoose.Schema(
     visible: { type: Boolean, default: false },
     title: { type: String, default: "", trim: true, maxlength: 80 },
     subtitle: { type: String, default: "", trim: true, maxlength: 120 },
+    eventLogoUrl: { type: String, default: "", trim: true, maxlength: 1000 },
+    sponsorLogos: {
+      type: [{ type: String, trim: true, maxlength: 1000 }],
+      default: [],
+    },
+    mapName: { type: String, default: "", trim: true, maxlength: 60 },
+    mapImageUrl: { type: String, default: "", trim: true, maxlength: 1000 },
   },
   { _id: false }
 );
@@ -71,6 +78,54 @@ const winnerSchema = new mongoose.Schema(
     },
     title: { type: String, default: "CHAMPIONS", trim: true, maxlength: 60 },
     subtitle: { type: String, default: "", trim: true, maxlength: 100 },
+    backgroundImageUrl: { type: String, default: "", trim: true, maxlength: 1000 },
+    playerImageUrl: { type: String, default: "", trim: true, maxlength: 1000 },
+    playerName: { type: String, default: "", trim: true, maxlength: 60 },
+    teamLogoUrl: { type: String, default: "", trim: true, maxlength: 1000 },
+    // null = never auto/manual, true = auto winner active, false = operator
+    // has taken control. Manual winner edits must never be overwritten.
+    auto: { type: Boolean, default: null },
+  },
+  { _id: false }
+);
+
+const layoutEntrySchema = new mongoose.Schema(
+  {
+    x: { type: Number, default: 0, min: 0, max: 100 },
+    y: { type: Number, default: 0, min: 0, max: 100 },
+    // 0 means "use the element's natural width".
+    width: { type: Number, default: 0, min: 0, max: 100 },
+    scale: { type: Number, default: 100, min: 40, max: 200 },
+  },
+  { _id: false }
+);
+
+const broadcastLayoutSchema = new mongoose.Schema(
+  {
+    pointsTable: {
+      type: layoutEntrySchema,
+      default: () => ({ x: 66, y: 20, width: 0, scale: 100 }),
+    },
+    killFeed: {
+      type: layoutEntrySchema,
+      default: () => ({ x: 72, y: 66, width: 24, scale: 100 }),
+    },
+    notification: {
+      type: layoutEntrySchema,
+      default: () => ({ x: 4, y: 64, width: 24, scale: 100 }),
+    },
+    lowerThird: {
+      type: layoutEntrySchema,
+      default: () => ({ x: 4, y: 76, width: 34, scale: 100 }),
+    },
+    countdown: {
+      type: layoutEntrySchema,
+      default: () => ({ x: 37, y: 5, width: 26, scale: 100 }),
+    },
+    winner: {
+      type: layoutEntrySchema,
+      default: () => ({ x: 22, y: 22, width: 56, scale: 100 }),
+    },
   },
   { _id: false }
 );
@@ -81,6 +136,7 @@ const broadcastSchema = new mongoose.Schema(
     lowerThird: { type: lowerThirdSchema, default: () => ({}) },
     countdown: { type: countdownSchema, default: () => ({}) },
     winner: { type: winnerSchema, default: () => ({}) },
+    layout: { type: broadcastLayoutSchema, default: () => ({}) },
   },
   { _id: false }
 );
@@ -96,6 +152,8 @@ const tournamentSchema = new mongoose.Schema(
     },
     isDefault: { type: Boolean, default: false },
     isArchived: { type: Boolean, default: false },
+    // Round that all live scoring writes to until the scorer switches it.
+    activeRound: { type: Number, default: 0, min: 0 },
     design: { type: pointsTableSchema, default: () => ({}) },
     scoring: { type: scoringSchema, default: () => ({}) },
     broadcast: { type: broadcastSchema, default: () => ({}) },

@@ -9,6 +9,7 @@ import {
   getScoringConfig,
   recomputeTeamScores,
 } from "../utils/scoring.helper.js";
+import { syncAutoWinner } from "../utils/autoWinner.helper.js";
 
 // Only scoring actions have a deterministic inverse. Team/round lifecycle
 // events are intentionally excluded: undoing those would delete history.
@@ -259,6 +260,14 @@ const revertTeamLog = asyncHandler(async (req, res) => {
 
   recomputeTeamScores(team, scoring);
   await team.save();
+
+  if (log.eventType === "ELIMINATION_UPDATED") {
+    try {
+      await syncAutoWinner(req, log.roundNumber);
+    } catch (error) {
+      console.error("Failed to sync auto winner:", error.message);
+    }
+  }
 
   log.revertedAt = new Date();
   log.revertedBy = req.admin?._id ?? null;

@@ -14,6 +14,34 @@ const clampNumber = (value, min, max, fallback) => {
 const trimmed = (value, max) =>
   typeof value === "string" ? value.trim().slice(0, max) : undefined;
 
+const DEFAULT_LAYOUT = {
+  pointsTable: { x: 3.5, y: 16, width: 0, scale: 100 },
+  killFeed: { x: 80, y: 66, width: 0, scale: 100 },
+  notification: { x: 4, y: 64, width: 24, scale: 100 },
+  lowerThird: { x: 4, y: 80, width: 34, scale: 100 },
+  countdown: { x: 42.5, y: 4, width: 0, scale: 100 },
+  winner: { x: 22, y: 25, width: 56, scale: 100 },
+};
+
+const LAYOUT_KEYS = Object.keys(DEFAULT_LAYOUT);
+
+const serializeLayout = (layout = {}) =>
+  Object.fromEntries(
+    LAYOUT_KEYS.map((key) => {
+      const fallback = DEFAULT_LAYOUT[key];
+      const entry = layout?.[key] || {};
+      return [
+        key,
+        {
+          x: clampNumber(entry.x, 0, 100, fallback.x),
+          y: clampNumber(entry.y, 0, 100, fallback.y),
+          width: clampNumber(entry.width, 0, 100, fallback.width),
+          scale: clampNumber(entry.scale, 40, 200, fallback.scale),
+        },
+      ];
+    })
+  );
+
 const remainingFor = (countdown, now) => {
   if (countdown?.running && countdown?.endsAt) {
     return Math.max(
@@ -35,6 +63,8 @@ export const serializeBroadcast = (tournament) => {
   const winner = broadcast.winner || {};
   const now = Date.now();
 
+  const layout = serializeLayout(broadcast.layout);
+
   return {
     tournamentId: String(tournament?._id ?? ""),
     serverTime: new Date(now).toISOString(),
@@ -42,11 +72,18 @@ export const serializeBroadcast = (tournament) => {
       pointsTable: overlays.pointsTable !== false,
       leaderboard: overlays.leaderboard !== false,
       killFeed: overlays.killFeed !== false,
+      notification: overlays.notification !== false,
     },
     lowerThird: {
       visible: Boolean(lowerThird.visible),
       title: lowerThird.title || "",
       subtitle: lowerThird.subtitle || "",
+      eventLogoUrl: lowerThird.eventLogoUrl || "",
+      sponsorLogos: Array.isArray(lowerThird.sponsorLogos)
+        ? lowerThird.sponsorLogos.filter(Boolean).slice(0, 6)
+        : [],
+      mapName: lowerThird.mapName || "",
+      mapImageUrl: lowerThird.mapImageUrl || "",
     },
     countdown: {
       visible: Boolean(countdown.visible),
@@ -64,7 +101,13 @@ export const serializeBroadcast = (tournament) => {
       teamId: winner.teamId ? String(winner.teamId) : null,
       title: winner.title || "CHAMPIONS",
       subtitle: winner.subtitle || "",
+      auto: Boolean(winner.auto),
+      backgroundImageUrl: winner.backgroundImageUrl || "",
+      playerImageUrl: winner.playerImageUrl || "",
+      playerName: winner.playerName || "",
+      teamLogoUrl: winner.teamLogoUrl || "",
     },
+    layout,
   };
 };
 
@@ -93,9 +136,15 @@ export const updateBroadcast = asyncHandler(async (req, res) => {
   if (!broadcast.lowerThird) broadcast.lowerThird = {};
   if (!broadcast.countdown) broadcast.countdown = {};
   if (!broadcast.winner) broadcast.winner = {};
+  if (!broadcast.layout) broadcast.layout = {};
 
   if (body.overlays && typeof body.overlays === "object") {
-    for (const key of ["pointsTable", "leaderboard", "killFeed"]) {
+    for (const key of [
+      "pointsTable",
+      "leaderboard",
+      "killFeed",
+      "notification",
+    ]) {
       if (typeof body.overlays[key] === "boolean") {
         broadcast.overlays[key] = body.overlays[key];
       }
@@ -111,6 +160,23 @@ export const updateBroadcast = asyncHandler(async (req, res) => {
     if (title !== undefined) broadcast.lowerThird.title = title;
     const subtitle = trimmed(source.subtitle, 120);
     if (subtitle !== undefined) broadcast.lowerThird.subtitle = subtitle;
+    const eventLogoUrl = trimmed(source.eventLogoUrl, 1000);
+    if (eventLogoUrl !== undefined) {
+      broadcast.lowerThird.eventLogoUrl = eventLogoUrl;
+    }
+    const mapName = trimmed(source.mapName, 60);
+    if (mapName !== undefined) broadcast.lowerThird.mapName = mapName;
+    const mapImageUrl = trimmed(source.mapImageUrl, 1000);
+    if (mapImageUrl !== undefined) {
+      broadcast.lowerThird.mapImageUrl = mapImageUrl;
+    }
+    if (Array.isArray(source.sponsorLogos)) {
+      broadcast.lowerThird.sponsorLogos = source.sponsorLogos
+        .filter((value) => typeof value === "string")
+        .map((value) => value.trim().slice(0, 1000))
+        .filter(Boolean)
+        .slice(0, 6);
+    }
     if (broadcast.lowerThird.visible && !broadcast.lowerThird.title) {
       throw new ApiError(400, "Lower third needs a title before showing");
     }
@@ -118,6 +184,8 @@ export const updateBroadcast = asyncHandler(async (req, res) => {
 
   if (body.winner && typeof body.winner === "object") {
     const source = body.winner;
+    // Any manual winner edit takes ownership away from the auto-winner.
+    broadcast.winner.auto = false;
     if (typeof source.visible === "boolean") {
       broadcast.winner.visible = source.visible;
     }
@@ -125,6 +193,20 @@ export const updateBroadcast = asyncHandler(async (req, res) => {
     if (title !== undefined) broadcast.winner.title = title;
     const subtitle = trimmed(source.subtitle, 100);
     if (subtitle !== undefined) broadcast.winner.subtitle = subtitle;
+    const backgroundImageUrl = trimmed(source.backgroundImageUrl, 1000);
+    if (backgroundImageUrl !== undefined) {
+      broadcast.winner.backgroundImageUrl = backgroundImageUrl;
+    }
+    const playerImageUrl = trimmed(source.playerImageUrl, 1000);
+    if (playerImageUrl !== undefined) {
+      broadcast.winner.playerImageUrl = playerImageUrl;
+    }
+    const playerName = trimmed(source.playerName, 60);
+    if (playerName !== undefined) broadcast.winner.playerName = playerName;
+    const teamLogoUrl = trimmed(source.teamLogoUrl, 1000);
+    if (teamLogoUrl !== undefined) {
+      broadcast.winner.teamLogoUrl = teamLogoUrl;
+    }
     if (source.teamId !== undefined) {
       if (source.teamId === null || source.teamId === "") {
         broadcast.winner.teamId = null;
@@ -145,6 +227,27 @@ export const updateBroadcast = asyncHandler(async (req, res) => {
     }
     if (broadcast.winner.visible && !broadcast.winner.teamId) {
       throw new ApiError(400, "Pick the winning team before showing");
+    }
+  }
+
+  if (body.layout && typeof body.layout === "object") {
+    for (const key of LAYOUT_KEYS) {
+      const source = body.layout[key];
+      if (!source || typeof source !== "object") continue;
+
+      const current = serializeLayout({
+        [key]: broadcast.layout?.[key],
+      })[key];
+
+      const next = { ...current };
+      for (const field of ["x", "y", "width", "scale"]) {
+        if (source[field] === undefined) continue;
+        const [min, max] =
+          field === "scale" ? [40, 200] : [0, 100];
+        const value = clampNumber(source[field], min, max, current[field]);
+        next[field] = Math.round(value * 100) / 100;
+      }
+      broadcast.layout[key] = next;
     }
   }
 
