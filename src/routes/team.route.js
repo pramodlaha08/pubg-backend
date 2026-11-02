@@ -12,7 +12,9 @@ import {
   addKill,
   decreaseKill,
   deleteRoundFromTeams,
-  getTeamsByRound
+  getTeamsByRound,
+  getActiveRound,
+  setActiveRound
 } from "../controllers/team.controller.js";
 import { upload } from "../middlewares/multer.middleware.js";
 import {
@@ -23,6 +25,8 @@ import {
 const router = Router();
 
 router.get("/", getAllTeams);
+router.get("/rounds/active", getActiveRound);
+router.put("/rounds/active", requireScorer, setActiveRound);
 router.get("/match/:roundNumber", getTeamsByRound);
 router.post("/points", requireScorer, updateRoundPositions);
 router.post("/bulk", requireAdmin, createBulkTeams);

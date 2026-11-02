@@ -55,12 +55,25 @@ const MATCH_BOOLEANS = [
 ];
 const MATCH_TEXTS = ["title", "subtitle"];
 const OVERLAY_TEMPLATES = [
+  "arena",
+  "editorial",
+  "editorial-cards",
+  "editorial-podium",
+  "editorial-minimal",
+  "split",
+  "ticker",
+  "spotlight",
+  "scoreboard",
+  "ledger",
+  "matrix",
+  "strip",
   "classic",
   "lower-third",
   "card-stack",
   "big-board",
   "hairline",
 ];
+const CARD_STYLES = ["editorial", "spotlight", "minimal"];
 const SURFACE_STYLES = [
   "solid",
   "gradient",
@@ -267,6 +280,7 @@ const sanitizePointsTable = (input, base) => {
   next.columns ??= {};
   next.header ??= {};
   next.layout ??= {};
+  next.cards ??= {};
   next.notifications ??= {};
   next.leaderboard ??= {};
   next.match ??= {};
@@ -334,6 +348,14 @@ const sanitizePointsTable = (input, base) => {
       next.layout.gap = Math.round(
         clampNumber(source.layout.gap, 0, 24, next.layout.gap)
       );
+    }
+  }
+
+  if (source.cards && typeof source.cards === "object") {
+    for (const key of ["winner", "countdown", "lowerThird"]) {
+      if (CARD_STYLES.includes(source.cards[key])) {
+        next.cards[key] = source.cards[key];
+      }
     }
   }
 

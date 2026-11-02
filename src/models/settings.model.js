@@ -49,12 +49,25 @@ const pointsTableHeaderSchema = new mongoose.Schema(
 );
 
 const OVERLAY_TEMPLATES = [
+  "arena",
+  "editorial",
+  "editorial-cards",
+  "editorial-podium",
+  "editorial-minimal",
+  "split",
+  "ticker",
+  "spotlight",
+  "scoreboard",
+  "ledger",
+  "matrix",
+  "strip",
   "classic",
   "lower-third",
   "card-stack",
   "big-board",
   "hairline",
 ];
+const CARD_STYLES = ["editorial", "spotlight", "minimal"];
 const SURFACE_STYLES = [
   "solid",
   "gradient",
@@ -147,7 +160,7 @@ const overlayWatermarkSchema = new mongoose.Schema(
 
 const pointsTableLayoutSchema = new mongoose.Schema(
   {
-    template: { type: String, enum: OVERLAY_TEMPLATES, default: "classic" },
+    template: { type: String, enum: OVERLAY_TEMPLATES, default: "editorial" },
     width: { type: Number, default: 300, min: 200, max: 640 },
     rowHeight: { type: Number, default: 36, min: 26, max: 60 },
     fontScale: { type: Number, default: 1, min: 0.7, max: 1.6 },
@@ -218,6 +231,15 @@ const matchSettingsSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const overlayCardSettingsSchema = new mongoose.Schema(
+  {
+    winner: { type: String, enum: CARD_STYLES, default: "editorial" },
+    countdown: { type: String, enum: CARD_STYLES, default: "editorial" },
+    lowerThird: { type: String, enum: CARD_STYLES, default: "editorial" },
+  },
+  { _id: false }
+);
+
 export const pointsTableSchema = new mongoose.Schema(
   {
     preset: { type: String, default: "esports-blue" },
@@ -227,6 +249,7 @@ export const pointsTableSchema = new mongoose.Schema(
     columns: { type: pointsTableColumnsSchema, default: () => ({}) },
     header: { type: pointsTableHeaderSchema, default: () => ({}) },
     layout: { type: pointsTableLayoutSchema, default: () => ({}) },
+    cards: { type: overlayCardSettingsSchema, default: () => ({}) },
     notifications: { type: notificationSettingsSchema, default: () => ({}) },
     leaderboard: { type: leaderboardSettingsSchema, default: () => ({}) },
     match: { type: matchSettingsSchema, default: () => ({}) },
