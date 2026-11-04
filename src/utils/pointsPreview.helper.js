@@ -129,7 +129,7 @@ export const previewPointsImpact = ({ teams, roundNumber, verified, scoring }) =
     skipped,
     leaderboard,
     killPointMultiplier: scoring.killPointMultiplier,
-    trackKills: Boolean(scoring.trackKills),
+    trackKills: true,
   };
 };
 

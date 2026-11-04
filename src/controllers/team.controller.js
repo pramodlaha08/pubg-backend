@@ -719,6 +719,8 @@ const updateKills = asyncHandler(async (req, res) => {
     ],
   });
 
+  broadcast(req, "team_updated", team);
+
   return res
     .status(200)
     .json(new ApiResponse(200, team, "Kills updated successfully"));
@@ -875,13 +877,14 @@ const decreaseKill = asyncHandler(async (req, res) => {
 // Modified Elimination Handler
 const handleElimination = asyncHandler(async (req, res) => {
   const { teamId } = req.params;
-  const { playerIndex } = req.body;
+  const { playerIndex, all } = req.body;
+  const eliminateAll = all === true;
 
   const scoring = getScoringConfig(req.tournament);
 
   if (
-    playerIndex === undefined ||
-    !scoring.isValidPlayerIndex(playerIndex)
+    !eliminateAll &&
+    (playerIndex === undefined || !scoring.isValidPlayerIndex(playerIndex))
   ) {
     throw new ApiError(
       400,
@@ -901,17 +904,26 @@ const handleElimination = asyncHandler(async (req, res) => {
   );
   const currentRound = findTeamRound(team, roundNumber);
 
-  const playerIdx = currentRound.eliminatedPlayers.indexOf(playerIndex);
-  let eliminationChange = 0;
   const oldEliminationCount = currentRound.eliminationCount;
   const oldStatus = currentRound.status;
+  let eliminationChange = 0;
 
-  if (playerIdx === -1) {
-    currentRound.eliminatedPlayers.push(playerIndex);
-    eliminationChange = 1;
+  if (eliminateAll) {
+    currentRound.eliminatedPlayers = Array.from(
+      { length: scoring.fullEliminationCount },
+      (_, index) => index
+    );
+    eliminationChange =
+      scoring.fullEliminationCount - oldEliminationCount;
   } else {
-    currentRound.eliminatedPlayers.splice(playerIdx, 1);
-    eliminationChange = -1;
+    const playerIdx = currentRound.eliminatedPlayers.indexOf(playerIndex);
+    if (playerIdx === -1) {
+      currentRound.eliminatedPlayers.push(playerIndex);
+      eliminationChange = 1;
+    } else {
+      currentRound.eliminatedPlayers.splice(playerIdx, 1);
+      eliminationChange = -1;
+    }
   }
 
   currentRound.eliminationCount += eliminationChange;
@@ -940,46 +952,48 @@ const handleElimination = asyncHandler(async (req, res) => {
     }
   );
 
-  const toggleTemplate = logTemplates.eliminationUpdated({
-    team,
-    roundNumber,
-    playerIndex,
-    eliminationCount: currentRound.eliminationCount,
-    change: eliminationChange,
-    fullEliminationCount: scoring.fullEliminationCount,
-  });
-
-  void safeCreateTeamLog({
-    req,
-    eventType: "ELIMINATION_UPDATED",
-    severity: eliminationChange > 0 ? "highlight" : "info",
-    team,
-    roundNumber,
-    title: toggleTemplate.title,
-    message: toggleTemplate.message,
-    changes: [
-      {
-        field: "round.eliminationCount",
-        previous: oldEliminationCount,
-        current: currentRound.eliminationCount,
-        delta: eliminationChange,
-      },
-      {
-        field: "round.status",
-        previous: oldStatus,
-        current: currentRound.status,
-      },
-      {
-        field: "round.eliminatedPlayers",
-        previous: null,
-        current: currentRound.eliminatedPlayers,
-      },
-    ],
-    meta: {
+  if (!eliminateAll) {
+    const toggleTemplate = logTemplates.eliminationUpdated({
+      team,
+      roundNumber,
       playerIndex,
-      changeType: eliminationChange > 0 ? "eliminated" : "revived",
-    },
-  });
+      eliminationCount: currentRound.eliminationCount,
+      change: eliminationChange,
+      fullEliminationCount: scoring.fullEliminationCount,
+    });
+
+    void safeCreateTeamLog({
+      req,
+      eventType: "ELIMINATION_UPDATED",
+      severity: eliminationChange > 0 ? "highlight" : "info",
+      team,
+      roundNumber,
+      title: toggleTemplate.title,
+      message: toggleTemplate.message,
+      changes: [
+        {
+          field: "round.eliminationCount",
+          previous: oldEliminationCount,
+          current: currentRound.eliminationCount,
+          delta: eliminationChange,
+        },
+        {
+          field: "round.status",
+          previous: oldStatus,
+          current: currentRound.status,
+        },
+        {
+          field: "round.eliminatedPlayers",
+          previous: null,
+          current: currentRound.eliminatedPlayers,
+        },
+      ],
+      meta: {
+        playerIndex,
+        changeType: eliminationChange > 0 ? "eliminated" : "revived",
+      },
+    });
+  }
 
   if (currentRound.eliminationCount === scoring.fullEliminationCount) {
     const eliminatedTemplate = logTemplates.teamEliminated({
@@ -1022,9 +1036,11 @@ const handleElimination = asyncHandler(async (req, res) => {
       new ApiResponse(
         200,
         team,
-        `Player ${playerIndex} elimination ${
-          eliminationChange > 0 ? "added" : "removed"
-        } successfully`
+        eliminateAll
+          ? "Team wiped successfully"
+          : `Player ${playerIndex} elimination ${
+              eliminationChange > 0 ? "added" : "removed"
+            } successfully`
       )
     );
 });

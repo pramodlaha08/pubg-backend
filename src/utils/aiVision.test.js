@@ -37,10 +37,10 @@ test("buildVisionPrompt omits reference lists when none are provided", () => {
   assert.doesNotMatch(prompt, /Reference lists/);
 });
 
-test("buildVisionPrompt drops kill reading when trackKills is off", () => {
+test("buildVisionPrompt always reads kills even when trackKills is off", () => {
   const prompt = buildVisionPrompt("results", { trackKills: false });
-  assert.match(prompt, /PLACEMENT ONLY/i);
-  assert.match(prompt, /always output 0/);
+  assert.doesNotMatch(prompt, /PLACEMENT ONLY/i);
+  assert.match(prompt, /kills: that player's eliminations/i);
   assert.match(prompt, /"players"/);
 });
 

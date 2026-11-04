@@ -493,12 +493,6 @@ export const uploadResults = asyncHandler(async (req, res) => {
     resultRows,
   });
 
-  // Position-first events ignore eliminations entirely: drop any kills the
-  // reader produced so the comparison/preview only ever reconcile placement.
-  if (!scoring.trackKills) {
-    teamKills.clear();
-  }
-
   // Include every registered team, not only those already scored this round: the
   // results screenshot is usually the first source of scores for the round, so
   // filtering to existing rounds would leave the comparison empty and the admin
@@ -606,16 +600,10 @@ export const previewResults = asyncHandler(async (req, res) => {
     .lean();
   const scoring = getScoringConfig(req.tournament);
 
-  // Position-first events reconcile placement only; strip any kill values so
-  // the preview cannot show or apply elimination changes.
-  const verifiedEntries = scoring.trackKills
-    ? verified
-    : verified.map((entry) => ({ ...entry, kills: null }));
-
   const preview = previewPointsImpact({
     teams,
     roundNumber,
-    verified: verifiedEntries,
+    verified,
     scoring,
   });
 
@@ -651,15 +639,10 @@ export const applyResults = asyncHandler(async (req, res) => {
   const bySlot = new Map(teams.map((team) => [team.slot, team]));
   const scoring = getScoringConfig(req.tournament);
 
-  // Position-first events only ever write placement; never touch kills.
-  const verifiedEntries = scoring.trackKills
-    ? verified
-    : verified.map((entry) => ({ ...entry, kills: null }));
-
   const updated = [];
   const skipped = [];
 
-  for (const entry of verifiedEntries) {
+  for (const entry of verified) {
     const slot = Number(entry?.slot);
     const team = bySlot.get(slot);
     if (!team) {
@@ -700,13 +683,9 @@ export const applyResults = asyncHandler(async (req, res) => {
       team,
       roundNumber,
       title: `Verified: ${team.name}`,
-      message: scoring.trackKills
-        ? `Round ${roundNumber}: kills set to ${round.kills}, position set to ${round.position} from results screenshot. Team total now ${team.totalPoints} pts.`
-        : `Round ${roundNumber}: position set to ${round.position} from results screenshot. Team total now ${team.totalPoints} pts.`,
+      message: `Round ${roundNumber}: kills set to ${round.kills}, position set to ${round.position} from results screenshot. Team total now ${team.totalPoints} pts.`,
       changes: [
-        ...(scoring.trackKills
-          ? [{ field: "round.kills", current: round.kills }]
-          : []),
+        { field: "round.kills", current: round.kills },
         { field: "round.position", current: round.position },
         { field: "team.totalPoints", current: team.totalPoints },
       ],
@@ -720,7 +699,7 @@ export const applyResults = asyncHandler(async (req, res) => {
       $set: {
         roundNumber,
         rawText: rawText || "",
-        verified: verifiedEntries.map((entry) => ({
+        verified: verified.map((entry) => ({
           slot: Number(entry.slot),
           teamId: entry.teamId || null,
           kills: entry.kills ?? null,

@@ -80,8 +80,8 @@ test("previewPointsImpact ranks the leaderboard before and after", () => {
   assert.equal(bravo.projectedRank, 2);
 });
 
-test("previewPointsImpact scores placement only when kills are off", () => {
-  const positionOnly = getScoringConfig({
+test("previewPointsImpact always scores kills even when trackKills is off", () => {
+  const alwaysKills = getScoringConfig({
     scoring: {
       killPointMultiplier: 1,
       positionPoints: { "1": 10, "2": 6, "3": 5 },
@@ -92,11 +92,11 @@ test("previewPointsImpact scores placement only when kills are off", () => {
     teams,
     roundNumber: 1,
     verified: [{ slot: 1, kills: 4, position: 2 }],
-    scoring: positionOnly,
+    scoring: alwaysKills,
   });
   const alpha = preview.changes.find((row) => row.slot === 1);
-  assert.equal(alpha.currentTotal, 5); // pos3(5), kills ignored
-  assert.equal(alpha.projectedTotal, 6); // pos2(6), kills ignored
-  assert.equal(alpha.newKillPoints, 0);
-  assert.equal(preview.trackKills, false);
+  assert.equal(alpha.currentTotal, 7); // 2 kills + pos3(5)
+  assert.equal(alpha.projectedTotal, 10); // 4 kills + pos2(6)
+  assert.equal(alpha.newKillPoints, 4);
+  assert.equal(preview.trackKills, true);
 });

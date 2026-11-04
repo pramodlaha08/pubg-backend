@@ -135,9 +135,8 @@ export const buildVisionPrompt = (kind, context = {}) => {
   const { knownPlayers = [], knownTeams = [] } = context;
 
   if (kind === "results") {
-    // Position-first events do not score eliminations, so skip reading kill
-    // numbers entirely — it avoids kill misreads and keeps the prompt focused.
-    const includeKills = context.trackKills !== false;
+    // Eliminations always score, so kill numbers are always read.
+    const includeKills = true;
 
     const lines = includeKills
       ? [
