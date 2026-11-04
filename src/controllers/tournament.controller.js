@@ -33,7 +33,7 @@ const summarizeScoring = (scoring) => {
     positionPoints: toPlainPositionPoints(scoring.positionPoints),
     killPointMultiplier: scoring.killPointMultiplier ?? 1,
     fullEliminationCount: scoring.fullEliminationCount ?? 4,
-    trackKills: scoring.trackKills ?? false,
+    trackKills: true,
   };
 };
 
@@ -213,9 +213,7 @@ export const updateTournament = asyncHandler(async (req, res) => {
       }
       tournament.scoring.fullEliminationCount = count;
     }
-    if (scoring.trackKills !== undefined) {
-      tournament.scoring.trackKills = Boolean(scoring.trackKills);
-    }
+    tournament.scoring.trackKills = true;
   }
 
   await tournament.save();

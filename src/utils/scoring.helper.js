@@ -50,9 +50,9 @@ export const getScoringConfig = (tournament) => {
       ? 1
       : Number(scoring.killPointMultiplier);
 
-  // Position-first by default: eliminations only score when the tournament
-  // explicitly opts in with trackKills.
-  const trackKills = scoring.trackKills === true;
+  // Eliminations always award points. trackKills is kept for API
+  // compatibility but no longer disables kill scoring.
+  const trackKills = true;
 
   return {
     positionPoints,
@@ -60,10 +60,7 @@ export const getScoringConfig = (tournament) => {
       positionPoints[String(Number(position))] ?? 0,
     killPointMultiplier,
     trackKills,
-    // Kill value actually applied to totals. Zero when kill tracking is off so
-    // every consumer (recompute, preview, reconciliation) stays consistent.
-    killPointsFor: (kills) =>
-      trackKills ? (Number(kills) || 0) * killPointMultiplier : 0,
+    killPointsFor: (kills) => (Number(kills) || 0) * killPointMultiplier,
     fullEliminationCount,
     maxPlayerIndex: fullEliminationCount - 1,
     isValidPlayerIndex: (index) =>

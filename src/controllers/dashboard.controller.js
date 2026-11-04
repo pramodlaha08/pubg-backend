@@ -1,3 +1,4 @@
+import { RoundInfo } from "../models/roundInfo.model.js";
 import { Team } from "../models/team.model.js";
 import { TeamLog } from "../models/teamLog.model.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
@@ -6,9 +7,27 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 const LEADERBOARD_LIMIT = 5;
 const ACTIVITY_LIMIT = 8;
 
+const standingsTotal = (team, activeRound, finalRound) => {
+  const cutoff = Number(activeRound) || Number(team.currentRound) || 0;
+  const lastRound = Number(finalRound) || 0;
+  const includeCurrentPlacement = lastRound > 0 && cutoff >= lastRound;
+  return (team.rounds || []).reduce((total, round) => {
+    const placementCounts = includeCurrentPlacement
+      ? round.roundNumber <= cutoff
+      : round.roundNumber < cutoff;
+    const placementPoints = placementCounts ? round.positionPoints || 0 : 0;
+    const eliminationPoints =
+      round.roundNumber <= cutoff ? round.killPoints || 0 : 0;
+    return total + placementPoints + eliminationPoints;
+  }, 0);
+};
+
 export const getDashboardStats = asyncHandler(async (req, res) => {
-  const [teams, recentActivity] = await Promise.all([
+  const [teams, roundInfo, recentActivity] = await Promise.all([
     Team.find({ tournamentId: req.tournamentId }).lean(),
+    RoundInfo.find({ tournamentId: req.tournamentId })
+      .select("roundNumber")
+      .lean(),
     TeamLog.find({ tournamentId: req.tournamentId })
       .sort({ createdAt: -1, _id: -1 })
       .limit(ACTIVITY_LIMIT)
@@ -19,6 +38,13 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
   // Active round is authoritative; fall back to the furthest round for legacy
   // tournaments that predate the field.
   let currentRound = Number(req.tournament?.activeRound) || 0;
+  // Scheduled rounds are the source of truth for the final round. Fall back to
+  // the furthest created round for legacy tournaments without round metadata.
+  const scheduledFinalRound = roundInfo.reduce(
+    (max, round) => Math.max(max, Number(round.roundNumber) || 0),
+    0
+  );
+  let finalRound = scheduledFinalRound;
   let totalKills = 0;
   let totalEliminations = 0;
 
@@ -27,21 +53,35 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
     if (currentRound === 0 && (team.currentRound || 0) > currentRound) {
       currentRound = team.currentRound || 0;
     }
+    if (!scheduledFinalRound) {
+      if ((team.currentRound || 0) > finalRound) {
+        finalRound = team.currentRound || 0;
+      }
+      for (const round of team.rounds || []) {
+        if ((round.roundNumber || 0) > finalRound) {
+          finalRound = round.roundNumber || 0;
+        }
+      }
+    }
     for (const round of team.rounds || []) {
       totalKills += round.kills || 0;
       totalEliminations += round.eliminationCount || 0;
     }
   }
 
-  const leaderboard = [...teams]
-    .sort((a, b) => (b.totalPoints || 0) - (a.totalPoints || 0))
-    .slice(0, LEADERBOARD_LIMIT)
+  const leaderboard = teams
     .map((team) => ({
+      team,
+      totalPoints: standingsTotal(team, currentRound, finalRound),
+    }))
+    .sort((a, b) => b.totalPoints - a.totalPoints)
+    .slice(0, LEADERBOARD_LIMIT)
+    .map(({ team, totalPoints }) => ({
       id: team._id,
       name: team.name,
       slot: team.slot,
       logo: team.logo || "",
-      totalPoints: team.totalPoints || 0,
+      totalPoints,
       isEliminated: Boolean(team.isEliminated),
     }));
 
